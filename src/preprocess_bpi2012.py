@@ -138,6 +138,9 @@ def sample_cases(
 
     sampled = events[events["case_id"].isin(selected_case_ids)].copy()
     sampled = sampled.sort_values(["case_id", "timestamp", "activity"]).reset_index(drop=True)
+    # Full-case sampling preserves the original within-case event order, so this
+    # is usually redundant. Recompute it anyway so the sampled dataframe remains
+    # self-contained after sorting and if event-level filtering is added later.
     sampled["event_idx"] = sampled.groupby("case_id").cumcount()
     return sampled
 
@@ -147,3 +150,4 @@ def save_event_table(events: pd.DataFrame, output_path: str | Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     events.to_csv(output_path, index=False, encoding="utf-8")
     return output_path
+
