@@ -46,8 +46,12 @@ def _get_xes_value(parent: ET.Element, key: str) -> str | None:
     return None
 
 
-def _sort_and_index_events(events: pd.DataFrame) -> pd.DataFrame:
-    result = events.sort_values(EVENT_SORT_COLUMNS).reset_index(drop=True)
+def _sort_events(events: pd.DataFrame) -> pd.DataFrame:
+    return events.sort_values(EVENT_SORT_COLUMNS).reset_index(drop=True)
+
+
+def _add_event_idx(events: pd.DataFrame) -> pd.DataFrame:
+    result = _sort_events(events)
     result["event_idx"] = result.groupby("case_id").cumcount()
     return result
 
@@ -99,7 +103,7 @@ def load_bpi2012_events(
     events["timestamp"] = pd.to_datetime(events["timestamp"], utc=True, errors="coerce")
     events = events.dropna(subset=["case_id", "activity", "timestamp"])
     events = events.drop_duplicates(subset=["case_id", "activity", "lifecycle", "timestamp"])
-    return _sort_and_index_events(events)
+    return _add_event_idx(events)
 
 
 def summarize_event_table(events: pd.DataFrame) -> EventTableSummary:
@@ -158,27 +162,35 @@ def sample_cases(
     else:
         raise ValueError(f"Unknown sampling strategy: {strategy}")
 
-    sampled = events[events["case_id"].isin(selected_cases)].copy()
-    # Full-case sampling keeps within-case order, but recomputing keeps the
-    # sampled dataframe self-contained if event-level filtering is added later.
-    return _sort_and_index_events(sampled)
+    # Keep original event_idx values so sampled data can be traced back to the loaded log.
+    return _sort_events(events[events["case_id"].isin(selected_cases)].copy())
 
 
-def filter_short_cases(events: pd.DataFrame, min_case_length: int = 3) -> pd.DataFrame:
+def filter_short_cases(
+    events: pd.DataFrame,
+    min_case_length: int = 3,
+    verbose: bool = True,
+) -> pd.DataFrame:
     """Drop cases shorter than the minimum sequence length needed by SASRec."""
     if min_case_length < 1:
         raise ValueError("min_case_length must be at least 1")
     if events.empty:
+        if verbose:
+            print("Dropped 0 cases shorter than min_case_length=0 (empty input).")
         return events.copy()
 
     case_lengths = events.groupby("case_id").size()
     keep_cases = case_lengths[case_lengths >= min_case_length].index
-    return _sort_and_index_events(events[events["case_id"].isin(keep_cases)].copy())
+    dropped_cases = len(case_lengths) - len(keep_cases)
+    if verbose:
+        print(f"Dropped {dropped_cases} cases shorter than min_case_length={min_case_length}.")
+
+    return _sort_events(events[events["case_id"].isin(keep_cases)].copy())
 
 
 def add_time_features(events: pd.DataFrame) -> pd.DataFrame:
     """Add per-event time deltas for later time-aware model variants."""
-    result = _sort_and_index_events(events.copy()) if not events.empty else events.copy()
+    result = _sort_events(events.copy()) if not events.empty else events.copy()
     if result.empty:
         result["delta_prev_seconds"] = pd.Series(dtype="float64")
         result["delta_start_seconds"] = pd.Series(dtype="float64")
@@ -197,7 +209,7 @@ def encode_ids(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.Dat
         empty_items = pd.DataFrame(columns=["activity", "item_id"])
         return events.copy(), empty_users, empty_items, EncodingSummary(0, 0, 0)
 
-    result = _sort_and_index_events(events.copy())
+    result = _sort_events(events.copy())
 
     user_map = (
         result.groupby("case_id", as_index=False)["timestamp"]
@@ -212,8 +224,7 @@ def encode_ids(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.Dat
     item_map["item_id"] = range(1, len(item_map) + 1)
 
     result = result.merge(user_map, on="case_id", how="left").merge(item_map, on="activity", how="left")
-    result = result.sort_values(["user_id", "timestamp", "activity"]).reset_index(drop=True)
-    result["event_idx"] = result.groupby("user_id").cumcount()
+    result = result.sort_values(["user_id", "event_idx", "item_id"]).reset_index(drop=True)
 
     summary = EncodingSummary(
         num_users=int(result["user_id"].nunique()),
@@ -225,21 +236,25 @@ def encode_ids(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.Dat
 
 def build_sasrec_interactions(encoded_events: pd.DataFrame) -> pd.DataFrame:
     """Create the two-column interaction table expected by SASRec."""
-    required = {"user_id", "item_id", "timestamp", "activity"}
+    required = {"user_id", "item_id", "event_idx"}
     missing = required.difference(encoded_events.columns)
     if missing:
         raise ValueError(f"encoded_events is missing required columns: {sorted(missing)}")
 
     return (
-        encoded_events.sort_values(["user_id", "timestamp", "activity"])[["user_id", "item_id"]]
+        encoded_events.sort_values(["user_id", "event_idx", "item_id"])[["user_id", "item_id"]]
         .astype({"user_id": "int64", "item_id": "int64"})
         .reset_index(drop=True)
     )
 
 
-def prepare_sasrec_dataset(events: pd.DataFrame, min_case_length: int = 3) -> PreprocessResult:
+def prepare_sasrec_dataset(
+    events: pd.DataFrame,
+    min_case_length: int = 3,
+    verbose: bool = True,
+) -> PreprocessResult:
     """Run filtering, time features, ID encoding, and SASRec interaction building."""
-    filtered = filter_short_cases(events, min_case_length=min_case_length)
+    filtered = filter_short_cases(events, min_case_length=min_case_length, verbose=verbose)
     time_features = add_time_features(filtered)
     encoded, user_map, item_map, encoding_summary = encode_ids(time_features)
     interactions = build_sasrec_interactions(encoded)
@@ -286,4 +301,3 @@ def save_preprocess_result(result: PreprocessResult, output_dir: str | Path) -> 
             result.sasrec_interactions, output_dir / "sasrec_interactions.csv"
         ),
     }
-
