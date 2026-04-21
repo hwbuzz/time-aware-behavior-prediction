@@ -92,7 +92,7 @@ def evaluate(model, dataset, args, split: str = "test"):
     valid_user = 0
 
     users = list(range(1, user_num + 1))
-    if len(users) > args.eval_users:
+    if args.eval_users > 0 and len(users) > args.eval_users:
         users = random.sample(users, args.eval_users)
 
     model.eval()
