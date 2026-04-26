@@ -24,12 +24,67 @@ def load_sasrec_dataset(interactions_path: str):
 
     train, valid, test = {}, {}, {}
     for user_id, seq in user_sequences.items():
-        if len(seq) < 3:
+        if len(seq) < 4:
             train[user_id], valid[user_id], test[user_id] = seq, [], []
         else:
             train[user_id], valid[user_id], test[user_id] = seq[:-2], [seq[-2]], [seq[-1]]
 
     return train, valid, test, user_num, item_num
+
+
+def summarize_dataset_splits(dataset):
+    train, valid, test, user_num, item_num = dataset
+    train_users = sum(1 for u in range(1, user_num + 1) if len(train.get(u, [])) > 0)
+    valid_users = sum(1 for u in range(1, user_num + 1) if len(valid.get(u, [])) > 0)
+    test_users = sum(1 for u in range(1, user_num + 1) if len(test.get(u, [])) > 0)
+    train_only_users = sum(
+        1
+        for u in range(1, user_num + 1)
+        if len(train.get(u, [])) > 0 and len(valid.get(u, [])) == 0 and len(test.get(u, [])) == 0
+    )
+    train_interactions = int(sum(len(v) for v in train.values()))
+    valid_interactions = int(sum(len(v) for v in valid.values()))
+    test_interactions = int(sum(len(v) for v in test.values()))
+    total_interactions = train_interactions + valid_interactions + test_interactions
+    avg_train_len = train_interactions / max(train_users, 1)
+
+    return {
+        "users": int(user_num),
+        "items": int(item_num),
+        "train_users": int(train_users),
+        "valid_users": int(valid_users),
+        "test_users": int(test_users),
+        "train_only_users": int(train_only_users),
+        "users_with_eval_targets": int(valid_users),
+        "train_interactions": train_interactions,
+        "valid_interactions": valid_interactions,
+        "test_interactions": test_interactions,
+        "total_interactions": total_interactions,
+        "train_ratio": train_interactions / max(total_interactions, 1),
+        "valid_ratio": valid_interactions / max(total_interactions, 1),
+        "test_ratio": test_interactions / max(total_interactions, 1),
+        "avg_train_len": avg_train_len,
+    }
+
+
+def print_dataset_split_summary(stats: dict):
+    print(
+        "dataset split summary:"
+        f" users={stats['users']}, items={stats['items']}, "
+        f"train_users={stats['train_users']}, valid_users={stats['valid_users']}, test_users={stats['test_users']}, "
+        f"train_only_users={stats['train_only_users']}"
+    )
+    print(
+        "interaction split:"
+        f" train={stats['train_interactions']} ({stats['train_ratio']:.2%}), "
+        f"valid={stats['valid_interactions']} ({stats['valid_ratio']:.2%}), "
+        f"test={stats['test_interactions']} ({stats['test_ratio']:.2%}), "
+        f"total={stats['total_interactions']}"
+    )
+    print(
+        f"avg_train_len={stats['avg_train_len']:.2f}, "
+        f"users_with_eval_targets={stats['users_with_eval_targets']}"
+    )
 
 
 def random_neq(low: int, high: int, excluded: set[int]) -> int:

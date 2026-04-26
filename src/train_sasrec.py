@@ -16,7 +16,14 @@ import numpy as np
 import torch
 
 from src.sasrec_model import SASRec
-from src.sasrec_utils import BatchSampler, evaluate, load_sasrec_dataset, recommend_topk
+from src.sasrec_utils import (
+    BatchSampler,
+    evaluate,
+    load_sasrec_dataset,
+    print_dataset_split_summary,
+    recommend_topk,
+    summarize_dataset_splits,
+)
 
 
 def parse_args():
@@ -43,6 +50,7 @@ def parse_args():
     parser.add_argument("--inference_only", action="store_true")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--recommend_user", type=int, default=None)
+    parser.add_argument("--save_every_eval", action="store_true")
     return parser.parse_args()
 
 
@@ -100,12 +108,35 @@ def append_metrics(path: Path, row: dict):
         writer.writerow(row)
 
 
+def write_latest_run_pointer(output_dir: Path, summary: dict):
+    latest_path = output_dir / "latest_run.json"
+    latest_payload = {
+        "run_name": summary["run_name"],
+        "run_dir": summary["run_dir"],
+        "completed_at": summary["completed_at"],
+        "mode": summary["mode"],
+        "mode": summary["mode"],
+        "checkpoint_best": summary.get("checkpoint_best"),
+        "checkpoint_last": summary.get("checkpoint_last"),
+        "checkpoint_dir": summary.get("checkpoint_dir"),
+        "config_path": str(Path(summary["run_dir"]) / "config.json"),
+        "metrics_history": summary.get("metrics_history"),
+        "metrics_summary": str(Path(summary["run_dir"]) / "metrics_summary.json"),
+        "dataset_users": summary["config"]["dataset_stats"].get("users"),
+        "dataset_items": summary["config"]["dataset_stats"].get("items"),
+        "train_only_users": summary["config"]["dataset_stats"].get("train_only_users"),
+        "metrics_summary": str(Path(summary["run_dir"]) / "metrics_summary.json"),
+    }
+    write_json(latest_path, latest_payload)
+
+
 def update_experiment_index(output_dir: Path, summary: dict):
     index_path = output_dir / "experiment_index.csv"
     row = {
         "run_name": summary["run_name"],
         "run_dir": summary["run_dir"],
         "completed_at": summary["completed_at"],
+        "mode": summary["mode"],
         "best_epoch": summary.get("best_epoch"),
         "best_valid_ndcg": summary.get("best_valid", {}).get("ndcg"),
         "best_valid_hr": summary.get("best_valid", {}).get("hr"),
@@ -117,6 +148,13 @@ def update_experiment_index(output_dir: Path, summary: dict):
         "last_test_hr": summary.get("last_test", {}).get("hr"),
         "checkpoint_best": summary.get("checkpoint_best"),
         "checkpoint_last": summary.get("checkpoint_last"),
+        "checkpoint_dir": summary.get("checkpoint_dir"),
+        "config_path": str(Path(summary["run_dir"]) / "config.json"),
+        "metrics_history": summary.get("metrics_history"),
+        "metrics_summary": str(Path(summary["run_dir"]) / "metrics_summary.json"),
+        "dataset_users": summary["config"]["dataset_stats"].get("users"),
+        "dataset_items": summary["config"]["dataset_stats"].get("items"),
+        "train_only_users": summary["config"]["dataset_stats"].get("train_only_users"),
         "hidden_units": summary["config"]["hidden_units"],
         "num_blocks": summary["config"]["num_blocks"],
         "num_heads": summary["config"]["num_heads"],
@@ -170,17 +208,12 @@ def main():
     dataset = load_sasrec_dataset(args.interactions_path)
     user_train, _, _, user_num, item_num = dataset
     num_batch = (len(user_train) - 1) // args.batch_size + 1
-    avg_len = sum(len(v) for v in user_train.values()) / max(len(user_train), 1)
-    dataset_stats = {
-        "users": user_num,
-        "items": item_num,
-        "train_interactions": int(sum(len(v) for v in user_train.values())),
-        "avg_train_len": avg_len,
-        "batches_per_epoch": num_batch,
-    }
+    dataset_stats = summarize_dataset_splits(dataset)
+    dataset_stats["batches_per_epoch"] = num_batch
     config = serializable_args(args, dataset_stats)
     write_json(run_dir / "config.json", config)
-    print(f"users={user_num}, items={item_num}, avg_train_len={avg_len:.2f}, batches={num_batch}")
+    print_dataset_split_summary(dataset_stats)
+    print(f"batches_per_epoch={num_batch}")
     print(f"run_dir={run_dir}")
 
     model = init_model(user_num, item_num, args)
@@ -203,6 +236,7 @@ def main():
             "checkpoint": args.checkpoint,
         }
         write_json(run_dir / "metrics_summary.json", summary)
+        write_latest_run_pointer(output_dir, summary)
         if args.recommend_user is not None:
             print("recommendations:", recommend_topk(model, args.recommend_user, dataset, args))
         return
@@ -215,6 +249,9 @@ def main():
     best_row = None
     last_row = None
     best_ckpt = run_dir / "sasrec_best.pth"
+    eval_ckpt_dir = run_dir / "checkpoints"
+    if args.save_every_eval:
+        eval_ckpt_dir.mkdir(parents=True, exist_ok=True)
     for epoch in range(1, args.num_epochs + 1):
         loss = train_one_epoch(model, sampler, optimizer, criterion, args, num_batch)
         print(f"epoch={epoch}, loss={loss:.4f}")
@@ -236,6 +273,11 @@ def main():
                 f"epoch={epoch}, valid NDCG@{args.topk}: {val[0]:.4f}, HR@{args.topk}: {val[1]:.4f}, "
                 f"test NDCG@{args.topk}: {test[0]:.4f}, HR@{args.topk}: {test[1]:.4f}"
             )
+            if args.save_every_eval:
+                eval_ckpt = eval_ckpt_dir / f"sasrec_epoch_{epoch:03d}.pth"
+                torch.save(model.state_dict(), eval_ckpt)
+                print(f"saved eval checkpoint: {eval_ckpt}")
+
             if val[0] > best_val:
                 best_val = val[0]
                 best_row = row
@@ -259,8 +301,10 @@ def main():
         "checkpoint_best": str(best_ckpt) if best_row else None,
         "checkpoint_last": str(final_ckpt),
         "metrics_history": str(metrics_path),
+        "checkpoint_dir": str(eval_ckpt_dir) if args.save_every_eval else None,
     }
     write_json(run_dir / "metrics_summary.json", summary)
+    write_latest_run_pointer(output_dir, summary)
     update_experiment_index(output_dir, summary)
 
 
