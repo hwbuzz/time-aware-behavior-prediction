@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import csv
@@ -18,8 +18,9 @@ import torch
 from src.sasrec_model import SASRec
 from src.sasrec_utils import (
     BatchSampler,
-    evaluate,
+    evaluate_all,
     load_sasrec_dataset,
+    parse_topks,
     print_dataset_split_summary,
     recommend_topk,
     summarize_dataset_splits,
@@ -46,6 +47,9 @@ def parse_args():
     parser.add_argument("--eval_users", type=int, default=10000)
     parser.add_argument("--num_negative_samples", type=int, default=100)
     parser.add_argument("--topk", type=int, default=10)
+    parser.add_argument("--topk_list", type=str, default="5,10")
+    parser.add_argument("--eval_protocol", type=str, choices=["full", "sampled", "both"], default="both")
+    parser.add_argument("--selection_metric", type=str, default="full_valid_ndcg@10")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--inference_only", action="store_true")
     parser.add_argument("--checkpoint", type=str, default=None)
@@ -91,6 +95,7 @@ def serializable_args(args, dataset_stats: dict) -> dict:
     config = vars(args).copy()
     config["device"] = str(config["device"])
     config["dataset_stats"] = dataset_stats
+    config["topks"] = parse_topks(config["topk_list"])
     return config
 
 
@@ -108,13 +113,32 @@ def append_metrics(path: Path, row: dict):
         writer.writerow(row)
 
 
+def flatten_metrics(prefix: str, metrics_by_mode: dict) -> dict:
+    row = {}
+    for mode, metrics in metrics_by_mode.items():
+        for key, value in metrics.items():
+            row[f"{mode}_{prefix}_{key}"] = value
+    return row
+
+
+def metric_value(metrics_by_mode: dict, metric_name: str) -> float:
+    mode, split, metric_key = metric_name.split("_", 2)
+    return float(metrics_by_mode[mode][metric_key])
+
+
+def summarize_eval_result(metrics_by_mode: dict) -> dict:
+    summary = {}
+    for mode, metrics in metrics_by_mode.items():
+        summary[mode] = metrics
+    return summary
+
+
 def write_latest_run_pointer(output_dir: Path, summary: dict):
     latest_path = output_dir / "latest_run.json"
     latest_payload = {
         "run_name": summary["run_name"],
         "run_dir": summary["run_dir"],
         "completed_at": summary["completed_at"],
-        "mode": summary["mode"],
         "mode": summary["mode"],
         "checkpoint_best": summary.get("checkpoint_best"),
         "checkpoint_last": summary.get("checkpoint_last"),
@@ -125,27 +149,40 @@ def write_latest_run_pointer(output_dir: Path, summary: dict):
         "dataset_users": summary["config"]["dataset_stats"].get("users"),
         "dataset_items": summary["config"]["dataset_stats"].get("items"),
         "train_only_users": summary["config"]["dataset_stats"].get("train_only_users"),
-        "metrics_summary": str(Path(summary["run_dir"]) / "metrics_summary.json"),
+        "selection_metric": summary["config"].get("selection_metric"),
     }
     write_json(latest_path, latest_payload)
 
 
 def update_experiment_index(output_dir: Path, summary: dict):
     index_path = output_dir / "experiment_index.csv"
+    best_valid = summary.get("best_valid", {})
+    best_test = summary.get("best_test_at_best_valid", {})
+    last_valid = summary.get("last_valid", {})
+    last_test = summary.get("last_test", {})
+
+    def pick(metrics_group: dict, mode: str, key: str):
+        return metrics_group.get(mode, {}).get(key)
+
     row = {
         "run_name": summary["run_name"],
         "run_dir": summary["run_dir"],
         "completed_at": summary["completed_at"],
         "mode": summary["mode"],
+        "selection_metric": summary["config"].get("selection_metric"),
         "best_epoch": summary.get("best_epoch"),
-        "best_valid_ndcg": summary.get("best_valid", {}).get("ndcg"),
-        "best_valid_hr": summary.get("best_valid", {}).get("hr"),
-        "best_test_ndcg": summary.get("best_test_at_best_valid", {}).get("ndcg"),
-        "best_test_hr": summary.get("best_test_at_best_valid", {}).get("hr"),
-        "last_valid_ndcg": summary.get("last_valid", {}).get("ndcg"),
-        "last_valid_hr": summary.get("last_valid", {}).get("hr"),
-        "last_test_ndcg": summary.get("last_test", {}).get("ndcg"),
-        "last_test_hr": summary.get("last_test", {}).get("hr"),
+        "best_valid_ndcg": pick(best_valid, "full", "ndcg@10"),
+        "best_valid_hr": pick(best_valid, "full", "hr@10"),
+        "best_valid_mrr": pick(best_valid, "full", "mrr"),
+        "best_test_ndcg": pick(best_test, "full", "ndcg@10"),
+        "best_test_hr": pick(best_test, "full", "hr@10"),
+        "best_test_mrr": pick(best_test, "full", "mrr"),
+        "last_valid_ndcg": pick(last_valid, "full", "ndcg@10"),
+        "last_valid_hr": pick(last_valid, "full", "hr@10"),
+        "last_valid_mrr": pick(last_valid, "full", "mrr"),
+        "last_test_ndcg": pick(last_test, "full", "ndcg@10"),
+        "last_test_hr": pick(last_test, "full", "hr@10"),
+        "last_test_mrr": pick(last_test, "full", "mrr"),
         "checkpoint_best": summary.get("checkpoint_best"),
         "checkpoint_last": summary.get("checkpoint_last"),
         "checkpoint_dir": summary.get("checkpoint_dir"),
@@ -165,9 +202,15 @@ def update_experiment_index(output_dir: Path, summary: dict):
         "num_epochs": summary["config"]["num_epochs"],
         "eval_users": summary["config"]["eval_users"],
         "num_negative_samples": summary["config"]["num_negative_samples"],
+        "eval_protocol": summary["config"]["eval_protocol"],
         "topk": summary["config"]["topk"],
+        "topk_list": summary["config"]["topk_list"],
         "seed": summary["config"]["seed"],
     }
+    for prefix, metrics in [("best_valid", best_valid), ("best_test", best_test), ("last_valid", last_valid), ("last_test", last_test)]:
+        for mode, mode_metrics in metrics.items():
+            for key, value in mode_metrics.items():
+                row[f"{prefix}_{mode}_{key}"] = value
     write_header = not index_path.exists()
     with index_path.open("a", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(row.keys()))
@@ -197,8 +240,19 @@ def train_one_epoch(model, sampler, optimizer, criterion, args, num_batch: int):
     return total_loss / max(num_batch, 1)
 
 
+def print_eval_metrics(split: str, metrics_by_mode: dict, topks: list[int]):
+    for mode, metrics in metrics_by_mode.items():
+        pieces = [f"{split} [{mode}]"]
+        for k in topks:
+            pieces.append(f"NDCG@{k}: {metrics[f'ndcg@{k}']:.4f}")
+            pieces.append(f"HR@{k}: {metrics[f'hr@{k}']:.4f}")
+        pieces.append(f"MRR: {metrics['mrr']:.4f}")
+        print(', '.join(pieces))
+
+
 def main():
     args = parse_args()
+    topks = parse_topks(args.topk_list)
     set_seed(args.seed)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -214,6 +268,7 @@ def main():
     write_json(run_dir / "config.json", config)
     print_dataset_split_summary(dataset_stats)
     print(f"batches_per_epoch={num_batch}")
+    print(f"selection_metric={args.selection_metric}")
     print(f"run_dir={run_dir}")
 
     model = init_model(user_num, item_num, args)
@@ -221,19 +276,23 @@ def main():
         model.load_state_dict(torch.load(args.checkpoint, map_location=args.device))
 
     if args.inference_only:
-        val = evaluate(model, dataset, args, split="valid")
-        test = evaluate(model, dataset, args, split="test")
-        print(f"valid NDCG@{args.topk}: {val[0]:.4f}, HR@{args.topk}: {val[1]:.4f}")
-        print(f"test  NDCG@{args.topk}: {test[0]:.4f}, HR@{args.topk}: {test[1]:.4f}")
+        valid_metrics = evaluate_all(model, dataset, args, split="valid", topks=topks)
+        test_metrics = evaluate_all(model, dataset, args, split="test", topks=topks)
+        print_eval_metrics("valid", valid_metrics, topks)
+        print_eval_metrics("test", test_metrics, topks)
         summary = {
             "run_name": run_dir.name,
             "run_dir": str(run_dir),
             "completed_at": datetime.now().isoformat(timespec="seconds"),
             "mode": "inference_only",
             "config": config,
-            "valid": {"ndcg": val[0], "hr": val[1]},
-            "test": {"ndcg": test[0], "hr": test[1]},
+            "valid": summarize_eval_result(valid_metrics),
+            "test": summarize_eval_result(test_metrics),
             "checkpoint": args.checkpoint,
+            "checkpoint_best": args.checkpoint,
+            "checkpoint_last": args.checkpoint,
+            "checkpoint_dir": None,
+            "metrics_history": None,
         }
         write_json(run_dir / "metrics_summary.json", summary)
         write_latest_run_pointer(output_dir, summary)
@@ -245,42 +304,47 @@ def main():
     criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.98))
 
-    best_val = -1.0
+    best_score = float("-inf")
     best_row = None
     last_row = None
+    last_valid_metrics = None
+    last_test_metrics = None
     best_ckpt = run_dir / "sasrec_best.pth"
     eval_ckpt_dir = run_dir / "checkpoints"
     if args.save_every_eval:
         eval_ckpt_dir.mkdir(parents=True, exist_ok=True)
+
     for epoch in range(1, args.num_epochs + 1):
         loss = train_one_epoch(model, sampler, optimizer, criterion, args, num_batch)
         print(f"epoch={epoch}, loss={loss:.4f}")
 
         if epoch % args.eval_every == 0 or epoch == args.num_epochs:
-            val = evaluate(model, dataset, args, split="valid")
-            test = evaluate(model, dataset, args, split="test")
-            row = {
-                "epoch": epoch,
-                "loss": loss,
-                "valid_ndcg": val[0],
-                "valid_hr": val[1],
-                "test_ndcg": test[0],
-                "test_hr": test[1],
-            }
+            valid_metrics = evaluate_all(model, dataset, args, split="valid", topks=topks)
+            test_metrics = evaluate_all(model, dataset, args, split="test", topks=topks)
+            row = {"epoch": epoch, "loss": loss}
+            row.update(flatten_metrics("valid", valid_metrics))
+            row.update(flatten_metrics("test", test_metrics))
             append_metrics(metrics_path, row)
             last_row = row
-            print(
-                f"epoch={epoch}, valid NDCG@{args.topk}: {val[0]:.4f}, HR@{args.topk}: {val[1]:.4f}, "
-                f"test NDCG@{args.topk}: {test[0]:.4f}, HR@{args.topk}: {test[1]:.4f}"
-            )
+            last_valid_metrics = summarize_eval_result(valid_metrics)
+            last_test_metrics = summarize_eval_result(test_metrics)
+            print_eval_metrics("valid", valid_metrics, topks)
+            print_eval_metrics("test", test_metrics, topks)
+
             if args.save_every_eval:
                 eval_ckpt = eval_ckpt_dir / f"sasrec_epoch_{epoch:03d}.pth"
                 torch.save(model.state_dict(), eval_ckpt)
                 print(f"saved eval checkpoint: {eval_ckpt}")
 
-            if val[0] > best_val:
-                best_val = val[0]
-                best_row = row
+            selection_score = metric_value(valid_metrics, args.selection_metric)
+            if selection_score > best_score:
+                best_score = selection_score
+                best_row = {
+                    "epoch": epoch,
+                    "loss": loss,
+                    "valid": summarize_eval_result(valid_metrics),
+                    "test": summarize_eval_result(test_metrics),
+                }
                 torch.save(model.state_dict(), best_ckpt)
                 print(f"saved checkpoint: {best_ckpt}")
 
@@ -294,10 +358,10 @@ def main():
         "mode": "train",
         "config": config,
         "best_epoch": best_row["epoch"] if best_row else None,
-        "best_valid": {"ndcg": best_row["valid_ndcg"], "hr": best_row["valid_hr"]} if best_row else None,
-        "best_test_at_best_valid": {"ndcg": best_row["test_ndcg"], "hr": best_row["test_hr"]} if best_row else None,
-        "last_valid": {"ndcg": last_row["valid_ndcg"], "hr": last_row["valid_hr"]} if last_row else None,
-        "last_test": {"ndcg": last_row["test_ndcg"], "hr": last_row["test_hr"]} if last_row else None,
+        "best_valid": best_row["valid"] if best_row else None,
+        "best_test_at_best_valid": best_row["test"] if best_row else None,
+        "last_valid": last_valid_metrics,
+        "last_test": last_test_metrics,
         "checkpoint_best": str(best_ckpt) if best_row else None,
         "checkpoint_last": str(final_ckpt),
         "metrics_history": str(metrics_path),

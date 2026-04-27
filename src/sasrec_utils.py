@@ -1,10 +1,14 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import defaultdict
 import random
+from statistics import median
 
 import numpy as np
 import torch
+
+
+DEFAULT_TOPKS = (5, 10)
 
 
 def load_sasrec_dataset(interactions_path: str):
@@ -139,51 +143,109 @@ class BatchSampler:
         return seq, pos, neg
 
 
-def evaluate(model, dataset, args, split: str = "test"):
+def parse_topks(topk_spec) -> list[int]:
+    if isinstance(topk_spec, int):
+        return [topk_spec]
+    if isinstance(topk_spec, (list, tuple)):
+        values = [int(v) for v in topk_spec]
+    else:
+        values = [int(part.strip()) for part in str(topk_spec).split(",") if part.strip()]
+    return sorted(set(v for v in values if v > 0)) or list(DEFAULT_TOPKS)
+
+
+def _build_eval_sequence(train, valid, user: int, args, split: str):
+    seq = np.zeros(args.maxlen, dtype=np.int32)
+    idx = args.maxlen - 1
+    eval_source = train[user] + (valid[user] if split == "test" else [])
+    for item in reversed(eval_source):
+        seq[idx] = item
+        idx -= 1
+        if idx == -1:
+            break
+    return seq, eval_source
+
+
+def _candidate_items(eval_source: list[int], target_item: int, item_num: int, mode: str, num_negative_samples: int):
+    rated = set(eval_source)
+    rated.add(0)
+    if mode == "sampled":
+        item_idx = [target_item]
+        for _ in range(num_negative_samples):
+            item_idx.append(random_neq(1, item_num + 1, rated))
+        return item_idx
+    if mode == "full":
+        return [item for item in range(1, item_num + 1) if item not in rated]
+    raise ValueError(f"Unknown evaluation mode: {mode}")
+
+
+def _metric_summary_from_ranks(ranks: list[int], topks: list[int]) -> dict:
+    num_users = len(ranks)
+    if num_users == 0:
+        summary = {f"ndcg@{k}": 0.0 for k in topks}
+        summary.update({f"hr@{k}": 0.0 for k in topks})
+        summary.update({"mrr": 0.0, "mean_rank": 0.0, "median_rank": 0.0, "num_eval_users": 0})
+        return summary
+
+    summary = {}
+    for k in topks:
+        ndcg = 0.0
+        hit = 0.0
+        for rank in ranks:
+            if rank < k:
+                ndcg += 1 / np.log2(rank + 2)
+                hit += 1
+        summary[f"ndcg@{k}"] = ndcg / num_users
+        summary[f"hr@{k}"] = hit / num_users
+
+    reciprocal_ranks = [1.0 / (rank + 1) for rank in ranks]
+    one_based_ranks = [rank + 1 for rank in ranks]
+    summary["mrr"] = float(sum(reciprocal_ranks) / num_users)
+    summary["mean_rank"] = float(sum(one_based_ranks) / num_users)
+    summary["median_rank"] = float(median(one_based_ranks))
+    summary["num_eval_users"] = int(num_users)
+    return summary
+
+
+def evaluate(model, dataset, args, split: str = "test", mode: str = "sampled", topks: list[int] | None = None):
     train, valid, test, user_num, item_num = dataset
     target_dict = test if split == "test" else valid
-    ndcg = 0.0
-    hit = 0.0
-    valid_user = 0
+    topks = topks or parse_topks(getattr(args, "topk_list", getattr(args, "topk", DEFAULT_TOPKS)))
 
     users = list(range(1, user_num + 1))
     if args.eval_users > 0 and len(users) > args.eval_users:
         users = random.sample(users, args.eval_users)
 
+    ranks = []
     model.eval()
     with torch.no_grad():
         for user in users:
             if len(train.get(user, [])) < 1 or len(target_dict.get(user, [])) < 1:
                 continue
 
-            seq = np.zeros(args.maxlen, dtype=np.int32)
-            idx = args.maxlen - 1
-            eval_source = train[user] + (valid[user] if split == "test" else [])
-            for item in reversed(eval_source):
-                seq[idx] = item
-                idx -= 1
-                if idx == -1:
-                    break
-
-            rated = set(eval_source)
-            rated.add(0)
-            item_idx = [target_dict[user][0]]
-            for _ in range(args.num_negative_samples):
-                item_idx.append(random_neq(1, item_num + 1, rated))
-
+            seq, eval_source = _build_eval_sequence(train, valid, user, args, split)
+            target_item = target_dict[user][0]
+            item_idx = _candidate_items(eval_source, target_item, item_num, mode, args.num_negative_samples)
             predictions = -model.predict(np.array([user]), np.array([seq]), item_idx)[0]
             rank = predictions.argsort().argsort()[0].item()
-            valid_user += 1
-            if rank < args.topk:
-                ndcg += 1 / np.log2(rank + 2)
-                hit += 1
+            ranks.append(rank)
 
-    return (ndcg / valid_user, hit / valid_user) if valid_user else (0.0, 0.0)
+    return _metric_summary_from_ranks(ranks, topks)
+
+
+def evaluate_all(model, dataset, args, split: str = "test", topks: list[int] | None = None):
+    topks = topks or parse_topks(getattr(args, "topk_list", getattr(args, "topk", DEFAULT_TOPKS)))
+    modes = ["full"] if getattr(args, "eval_protocol", "both") == "full" else []
+    if getattr(args, "eval_protocol", "both") in {"sampled", "both"}:
+        if "sampled" not in modes:
+            modes.append("sampled")
+    if getattr(args, "eval_protocol", "both") == "both" and "full" not in modes:
+        modes.insert(0, "full")
+    return {mode: evaluate(model, dataset, args, split=split, mode=mode, topks=topks) for mode in modes}
 
 
 def recommend_topk(model, user_id: int, dataset, args, topk: int | None = None):
     train, valid, test, _, item_num = dataset
-    topk = topk or args.topk
+    topk = topk or getattr(args, "topk", max(parse_topks(getattr(args, "topk_list", DEFAULT_TOPKS))))
     history = train.get(user_id, []) + valid.get(user_id, [])
     if not history:
         raise ValueError(f"User {user_id} has no history for inference.")
