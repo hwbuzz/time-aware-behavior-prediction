@@ -29,7 +29,7 @@ COMMON_FLAGS = """--interactions_path data/processed/bpi2012_complete_only/sasre
   --num_negative_samples 100 \\
   --eval_protocol both \\
   --topk_list 5,10 \\
-  --selection_metric ndcg@5 \\
+  --selection_metric full_valid_ndcg@5 \\
   --save_every_eval"""
 
 
@@ -72,7 +72,7 @@ cells = [
     md_cell(
         "# SASRec BPI2012 Colab Train (`NDCG@5` selection)\n\n"
         "Colab notebook for re-running all `anchor_v3` and `refine_v3` settings with "
-        "`selection_metric=ndcg@5`.\n\n"
+        "`selection_metric=full_valid_ndcg@5`.\n\n"
         "Current evaluation protocol:\n"
         "- model selection: `full_valid_ndcg@5`\n"
         "- main evaluation: `full` ranking with `@5`, `@10`, `MRR`\n"
@@ -144,7 +144,7 @@ cells = [
         "These runs share the same evaluation settings:\n"
         "- `--eval_protocol both`\n"
         "- `--topk_list 5,10`\n"
-        "- `--selection_metric ndcg@5` (resolved to `full_valid_ndcg@5`)\n"
+        "- `--selection_metric full_valid_ndcg@5`\n"
         "- `--num_negative_samples 100`\n"
         "- `--save_every_eval`\n"
     ),
