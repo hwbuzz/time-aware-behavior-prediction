@@ -49,7 +49,16 @@ def parse_args():
     parser.add_argument("--topk", type=int, default=10)
     parser.add_argument("--topk_list", type=str, default="5,10")
     parser.add_argument("--eval_protocol", type=str, choices=["full", "sampled", "both"], default="both")
-    parser.add_argument("--selection_metric", type=str, default="full_valid_ndcg@10")
+    parser.add_argument(
+        "--selection_metric",
+        type=str,
+        default="full_valid_ndcg@10",
+        help=(
+            "Metric used to select the best epoch. "
+            "Examples: full_valid_ndcg@5, full_valid_ndcg@10, sampled_valid_ndcg@10. "
+            "Shorthand ndcg@5 / ndcg@10 is also accepted and resolves to full_valid_*."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--inference_only", action="store_true")
     parser.add_argument("--checkpoint", type=str, default=None)
@@ -119,6 +128,47 @@ def flatten_metrics(prefix: str, metrics_by_mode: dict) -> dict:
         for key, value in metrics.items():
             row[f"{mode}_{prefix}_{key}"] = value
     return row
+
+
+def normalize_selection_metric(selection_metric: str) -> str:
+    metric = selection_metric.strip()
+    if "_" not in metric:
+        return f"full_valid_{metric}"
+    if metric.count("_") == 1:
+        mode, metric_key = metric.split("_", 1)
+        return f"{mode}_valid_{metric_key}"
+    return metric
+
+
+def validate_selection_metric(selection_metric: str, args, topks: list[int]):
+    mode, split, metric_key = selection_metric.split("_", 2)
+    if mode not in {"full", "sampled"}:
+        raise ValueError(
+            f"selection_metric must start with 'full_' or 'sampled_'. Got: {selection_metric}"
+        )
+    if split != "valid":
+        raise ValueError(
+            f"selection_metric must target validation metrics (e.g. full_valid_ndcg@5). Got: {selection_metric}"
+        )
+    if mode == "sampled" and args.eval_protocol == "full":
+        raise ValueError(
+            "selection_metric requests sampled metrics, but eval_protocol=full only computes full metrics."
+        )
+    if mode == "full" and args.eval_protocol == "sampled":
+        raise ValueError(
+            "selection_metric requests full metrics, but eval_protocol=sampled only computes sampled metrics."
+        )
+    valid_metric_keys = {f"ndcg@{k}" for k in topks} | {f"hr@{k}" for k in topks} | {
+        "mrr",
+        "mean_rank",
+        "median_rank",
+        "num_eval_users",
+    }
+    if metric_key not in valid_metric_keys:
+        raise ValueError(
+            f"selection_metric '{selection_metric}' is not compatible with topk_list={topks}. "
+            f"Available metric keys: {sorted(valid_metric_keys)}"
+        )
 
 
 def metric_value(metrics_by_mode: dict, metric_name: str) -> float:
@@ -253,6 +303,8 @@ def print_eval_metrics(split: str, metrics_by_mode: dict, topks: list[int]):
 def main():
     args = parse_args()
     topks = parse_topks(args.topk_list)
+    args.selection_metric = normalize_selection_metric(args.selection_metric)
+    validate_selection_metric(args.selection_metric, args, topks)
     set_seed(args.seed)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
