@@ -33,9 +33,12 @@ class SASRec(torch.nn.Module):
         self.item_num = item_num
         self.dev = args.device
         self.norm_first = args.norm_first
+        self.use_time_embedding = getattr(args, "use_time_embedding", False)
 
         self.item_emb = torch.nn.Embedding(item_num + 1, args.hidden_units, padding_idx=0)
         self.pos_emb = torch.nn.Embedding(args.maxlen + 1, args.hidden_units, padding_idx=0)
+        if self.use_time_embedding:
+            self.time_emb = torch.nn.Embedding(args.time_bucket_count, args.hidden_units, padding_idx=0)
         self.emb_dropout = torch.nn.Dropout(args.dropout_rate)
 
         self.attention_layernorms = torch.nn.ModuleList()
@@ -52,13 +55,17 @@ class SASRec(torch.nn.Module):
             self.forward_layernorms.append(torch.nn.LayerNorm(args.hidden_units, eps=1e-8))
             self.forward_layers.append(PointWiseFeedForward(args.hidden_units, args.dropout_rate))
 
-    def log2feats(self, log_seqs: np.ndarray) -> torch.Tensor:
+    def log2feats(self, log_seqs: np.ndarray, time_seqs: np.ndarray | None = None) -> torch.Tensor:
         seqs = self.item_emb(torch.LongTensor(log_seqs).to(self.dev))
         seqs *= self.item_emb.embedding_dim ** 0.5
 
         positions = np.tile(np.arange(1, log_seqs.shape[1] + 1), [log_seqs.shape[0], 1])
         positions *= log_seqs != 0
         seqs += self.pos_emb(torch.LongTensor(positions).to(self.dev))
+        if self.use_time_embedding:
+            if time_seqs is None:
+                raise ValueError("time_seqs must be provided when use_time_embedding=True")
+            seqs += self.time_emb(torch.LongTensor(time_seqs).to(self.dev))
         seqs = self.emb_dropout(seqs)
 
         timeline_mask = torch.BoolTensor(log_seqs == 0).to(self.dev)
@@ -84,16 +91,16 @@ class SASRec(torch.nn.Module):
 
         return self.last_layernorm(seqs)
 
-    def forward(self, user_ids, log_seqs, pos_seqs, neg_seqs):
-        log_feats = self.log2feats(log_seqs)
+    def forward(self, user_ids, log_seqs, pos_seqs, neg_seqs, time_seqs=None):
+        log_feats = self.log2feats(log_seqs, time_seqs=time_seqs)
         pos_embs = self.item_emb(torch.LongTensor(pos_seqs).to(self.dev))
         neg_embs = self.item_emb(torch.LongTensor(neg_seqs).to(self.dev))
         pos_logits = (log_feats * pos_embs).sum(dim=-1)
         neg_logits = (log_feats * neg_embs).sum(dim=-1)
         return pos_logits, neg_logits
 
-    def predict(self, user_ids, log_seqs, item_indices):
-        log_feats = self.log2feats(log_seqs)
+    def predict(self, user_ids, log_seqs, item_indices, time_seqs=None):
+        log_feats = self.log2feats(log_seqs, time_seqs=time_seqs)
         final_feat = log_feats[:, -1, :]
         item_embs = self.item_emb(torch.LongTensor(item_indices).to(self.dev))
         return item_embs.matmul(final_feat.unsqueeze(-1)).squeeze(-1)

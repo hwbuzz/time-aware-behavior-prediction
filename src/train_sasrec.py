@@ -49,6 +49,27 @@ def parse_args():
     parser.add_argument("--topk", type=int, default=10)
     parser.add_argument("--topk_list", type=str, default="5,10")
     parser.add_argument("--eval_protocol", type=str, choices=["full", "sampled", "both"], default="both")
+    parser.add_argument("--use_time_embedding", action="store_true")
+    parser.add_argument("--time_features_path", type=str, default=None)
+    parser.add_argument("--time_delta_column", type=str, default="delta_prev_seconds")
+    parser.add_argument(
+        "--time_bucket_boundaries",
+        type=str,
+        default="60,600,3600,86400",
+        help="Comma-separated upper boundaries in seconds for positive time-delta buckets.",
+    )
+    parser.add_argument(
+        "--time_bucket_first_event_separate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Whether to allocate a dedicated bucket for the first event in each sequence.",
+    )
+    parser.add_argument(
+        "--time_bucket_zero_gap_separate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Whether to allocate a dedicated bucket for non-first events with zero time gap.",
+    )
     parser.add_argument(
         "--selection_metric",
         type=str,
@@ -84,6 +105,8 @@ def init_model(user_num: int, item_num: int, args):
             pass
     model.pos_emb.weight.data[0, :] = 0
     model.item_emb.weight.data[0, :] = 0
+    if getattr(args, "use_time_embedding", False):
+        model.time_emb.weight.data[0, :] = 0
     return model
 
 
@@ -273,8 +296,8 @@ def train_one_epoch(model, sampler, optimizer, criterion, args, num_batch: int):
     model.train()
     total_loss = 0.0
     for _ in range(num_batch):
-        user, seq, pos, neg = sampler.sample()
-        pos_logits, neg_logits = model(user, seq, pos, neg)
+        user, seq, pos, neg, time_seq = sampler.sample()
+        pos_logits, neg_logits = model(user, seq, pos, neg, time_seq)
         pos_labels = torch.ones(pos_logits.shape, device=args.device)
         neg_labels = torch.zeros(neg_logits.shape, device=args.device)
         indices = np.where(pos != 0)
@@ -311,11 +334,23 @@ def main():
     run_dir = make_run_dir(output_dir, args)
     metrics_path = run_dir / "metrics_history.csv"
 
-    dataset = load_sasrec_dataset(args.interactions_path)
-    user_train, _, _, user_num, item_num = dataset
+    dataset = load_sasrec_dataset(
+        args.interactions_path,
+        use_time_embedding=args.use_time_embedding,
+        time_features_path=args.time_features_path,
+        time_delta_column=args.time_delta_column,
+        time_bucket_boundaries=args.time_bucket_boundaries,
+        time_bucket_first_event_separate=args.time_bucket_first_event_separate,
+        time_bucket_zero_gap_separate=args.time_bucket_zero_gap_separate,
+    )
+    user_train, _, _, user_num, item_num, user_train_time, _, _, time_bucket_meta = dataset
     num_batch = (len(user_train) - 1) // args.batch_size + 1
     dataset_stats = summarize_dataset_splits(dataset)
     dataset_stats["batches_per_epoch"] = num_batch
+    if time_bucket_meta.get("enabled"):
+        args.time_bucket_count = time_bucket_meta["time_bucket_count"]
+    else:
+        args.time_bucket_count = 0
     config = serializable_args(args, dataset_stats)
     write_json(run_dir / "config.json", config)
     print_dataset_split_summary(dataset_stats)
@@ -352,7 +387,15 @@ def main():
             print("recommendations:", recommend_topk(model, args.recommend_user, dataset, args))
         return
 
-    sampler = BatchSampler(user_train, user_num, item_num, args.batch_size, args.maxlen, args.seed)
+    sampler = BatchSampler(
+        user_train,
+        user_num,
+        item_num,
+        args.batch_size,
+        args.maxlen,
+        user_train_time=user_train_time,
+        seed=args.seed,
+    )
     criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.98))
 
