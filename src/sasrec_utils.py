@@ -185,7 +185,7 @@ def summarize_dataset_splits(dataset):
     total_interactions = train_interactions + valid_interactions + test_interactions
     avg_train_len = train_interactions / max(train_users, 1)
 
-    return {
+    summary = {
         "users": int(user_num),
         "items": int(item_num),
         "train_users": int(train_users),
@@ -318,8 +318,15 @@ def _build_eval_sequence(train, valid, train_time, valid_time, user: int, args, 
     return seq, time_seq, eval_source
 
 
-def _candidate_items(eval_source: list[int], target_item: int, item_num: int, mode: str, num_negative_samples: int):
-    rated = set(eval_source)
+def _candidate_items(
+    eval_source: list[int],
+    exclusion_source: list[int],
+    target_item: int,
+    item_num: int,
+    mode: str,
+    num_negative_samples: int,
+):
+    rated = set(exclusion_source)
     rated.add(0)
     if mode == "sampled":
         item_idx = [target_item]
@@ -327,7 +334,8 @@ def _candidate_items(eval_source: list[int], target_item: int, item_num: int, mo
             item_idx.append(random_neq(1, item_num + 1, rated))
         return item_idx
     if mode == "full":
-        return [item for item in range(1, item_num + 1) if item not in rated]
+        negatives = [item for item in range(1, item_num + 1) if item not in rated and item != target_item]
+        return [target_item] + negatives
     raise ValueError(f"Unknown evaluation mode: {mode}")
 
 
@@ -377,7 +385,15 @@ def evaluate(model, dataset, args, split: str = "test", mode: str = "sampled", t
 
             seq, time_seq, eval_source = _build_eval_sequence(train, valid, train_time, valid_time, user, args, split)
             target_item = target_dict[user][0]
-            item_idx = _candidate_items(eval_source, target_item, item_num, mode, args.num_negative_samples)
+            exclusion_source = train[user] if mode == "sampled" else eval_source
+            item_idx = _candidate_items(
+                eval_source,
+                exclusion_source,
+                target_item,
+                item_num,
+                mode,
+                args.num_negative_samples,
+            )
             predictions = -model.predict(np.array([user]), np.array([seq]), item_idx, np.array([time_seq]))[0]
             rank = predictions.argsort().argsort()[0].item()
             ranks.append(rank)
