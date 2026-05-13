@@ -57,14 +57,21 @@ def default_time_features_path(interactions_path: str) -> str:
     return str(Path(interactions_path).resolve().with_name("events_encoded_time_features.csv"))
 
 
+def encode_continuous_time_features(delta_seconds: float, event_idx: int) -> tuple[float, float]:
+    # log1p compresses the long-tail time-gap distribution while preserving zero.
+    # `is_first_event` distinguishes the first event from non-first zero-gap events.
+    return float(np.log1p(max(delta_seconds, 0.0))), float(event_idx == 0)
+
+
 def load_time_feature_sequences(
     time_features_path: str,
     time_delta_column: str,
+    time_encoding: str,
     boundaries: list[float],
     separate_first_event: bool = True,
     separate_zero_gap: bool = True,
 ):
-    rows_by_user: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+    rows_by_user: dict[int, list[tuple[int, int, object]]] = defaultdict(list)
     with open(time_features_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         required_columns = {"user_id", "item_id", "event_idx", time_delta_column}
@@ -79,14 +86,19 @@ def load_time_feature_sequences(
             item_id = int(row["item_id"])
             event_idx = int(row["event_idx"])
             delta_seconds = float(row[time_delta_column])
-            bucket_idx = bucketize_time_delta(
-                delta_seconds,
-                event_idx,
-                boundaries,
-                separate_first_event=separate_first_event,
-                separate_zero_gap=separate_zero_gap,
-            )
-            rows_by_user[user_id].append((event_idx, item_id, bucket_idx))
+            if time_encoding == "bucket":
+                time_value = bucketize_time_delta(
+                    delta_seconds,
+                    event_idx,
+                    boundaries,
+                    separate_first_event=separate_first_event,
+                    separate_zero_gap=separate_zero_gap,
+                )
+            elif time_encoding == "continuous":
+                time_value = encode_continuous_time_features(delta_seconds, event_idx)
+            else:
+                raise ValueError(f"Unknown time_encoding: {time_encoding}")
+            rows_by_user[user_id].append((event_idx, item_id, time_value))
 
     item_sequences = {}
     time_sequences = {}
@@ -98,14 +110,20 @@ def load_time_feature_sequences(
     bucket_meta = {
         "time_features_path": str(Path(time_features_path).resolve()),
         "time_delta_column": time_delta_column,
+        "time_encoding": time_encoding,
         "time_bucket_boundaries": boundaries,
         "time_bucket_first_event_separate": bool(separate_first_event),
         "time_bucket_zero_gap_separate": bool(separate_zero_gap),
-        "time_bucket_count": time_bucket_count(
-            boundaries,
-            separate_first_event=separate_first_event,
-            separate_zero_gap=separate_zero_gap,
+        "time_bucket_count": (
+            time_bucket_count(
+                boundaries,
+                separate_first_event=separate_first_event,
+                separate_zero_gap=separate_zero_gap,
+            )
+            if time_encoding == "bucket"
+            else 0
         ),
+        "time_feature_dim": 1 if time_encoding == "bucket" else 2,
     }
     return item_sequences, time_sequences, bucket_meta
 
@@ -115,6 +133,7 @@ def load_sasrec_dataset(
     use_time_embedding: bool = False,
     time_features_path: str | None = None,
     time_delta_column: str = "delta_prev_seconds",
+    time_encoding: str = "bucket",
     time_bucket_boundaries=None,
     time_bucket_first_event_separate: bool = True,
     time_bucket_zero_gap_separate: bool = True,
@@ -141,6 +160,7 @@ def load_sasrec_dataset(
         time_item_sequences, time_bucket_sequences, time_bucket_meta = load_time_feature_sequences(
             resolved_time_features_path,
             time_delta_column=time_delta_column,
+            time_encoding=time_encoding,
             boundaries=boundaries,
             separate_first_event=time_bucket_first_event_separate,
             separate_zero_gap=time_bucket_zero_gap_separate,
@@ -207,8 +227,10 @@ def summarize_dataset_splits(dataset):
         if time_bucket_meta.get("enabled"):
             summary["time_embedding_enabled"] = True
             summary["time_delta_column"] = time_bucket_meta.get("time_delta_column")
+            summary["time_encoding"] = time_bucket_meta.get("time_encoding")
             summary["time_bucket_boundaries"] = time_bucket_meta.get("time_bucket_boundaries", [])
             summary["time_bucket_count"] = time_bucket_meta.get("time_bucket_count")
+            summary["time_feature_dim"] = time_bucket_meta.get("time_feature_dim")
         else:
             summary["time_embedding_enabled"] = False
     return summary
@@ -272,9 +294,14 @@ class BatchSampler:
         seq = np.zeros(self.maxlen, dtype=np.int32)
         pos = np.zeros(self.maxlen, dtype=np.int32)
         neg = np.zeros(self.maxlen, dtype=np.int32)
-        time_seq = np.zeros(self.maxlen, dtype=np.int32)
         items = self.user_train[user]
         time_items = self.user_train_time.get(user, [0] * len(items))
+        sample_time_value = time_items[0] if time_items else 0
+        if isinstance(sample_time_value, (tuple, list, np.ndarray)):
+            time_seq = np.zeros((self.maxlen, len(sample_time_value)), dtype=np.float32)
+        else:
+            time_dtype = np.float32 if any(isinstance(v, float) for v in time_items) else np.int32
+            time_seq = np.zeros(self.maxlen, dtype=time_dtype)
         nxt = items[-1]
         idx = self.maxlen - 1
         rated = set(items)
@@ -303,12 +330,17 @@ def parse_topks(topk_spec) -> list[int]:
 
 def _build_eval_sequence(train, valid, train_time, valid_time, user: int, args, split: str):
     seq = np.zeros(args.maxlen, dtype=np.int32)
-    time_seq = np.zeros(args.maxlen, dtype=np.int32)
     idx = args.maxlen - 1
     eval_source = train[user] + (valid[user] if split == "test" else [])
     eval_time_source = train_time.get(user, []) + (valid_time.get(user, []) if split == "test" else [])
     if len(eval_time_source) != len(eval_source):
         eval_time_source = [0] * len(eval_source)
+    sample_time_value = eval_time_source[0] if eval_time_source else 0
+    if isinstance(sample_time_value, (tuple, list, np.ndarray)):
+        time_seq = np.zeros((args.maxlen, len(sample_time_value)), dtype=np.float32)
+    else:
+        time_dtype = np.float32 if any(isinstance(v, float) for v in eval_time_source) else np.int32
+        time_seq = np.zeros(args.maxlen, dtype=time_dtype)
     for item, time_bucket in reversed(list(zip(eval_source, eval_time_source))):
         seq[idx] = item
         time_seq[idx] = time_bucket
@@ -423,7 +455,12 @@ def recommend_topk(model, user_id: int, dataset, args, topk: int | None = None):
         history_time = [0] * len(history)
 
     seq = np.zeros(args.maxlen, dtype=np.int32)
-    time_seq = np.zeros(args.maxlen, dtype=np.int32)
+    sample_time_value = history_time[0] if history_time else 0
+    if isinstance(sample_time_value, (tuple, list, np.ndarray)):
+        time_seq = np.zeros((args.maxlen, len(sample_time_value)), dtype=np.float32)
+    else:
+        time_dtype = np.float32 if any(isinstance(v, float) for v in history_time) else np.int32
+        time_seq = np.zeros(args.maxlen, dtype=time_dtype)
     idx = args.maxlen - 1
     for item, time_bucket in reversed(list(zip(history, history_time))):
         seq[idx] = item

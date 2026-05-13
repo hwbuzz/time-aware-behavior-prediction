@@ -34,11 +34,17 @@ class SASRec(torch.nn.Module):
         self.dev = args.device
         self.norm_first = args.norm_first
         self.use_time_embedding = getattr(args, "use_time_embedding", False)
+        self.time_encoding = getattr(args, "time_encoding", "bucket")
 
         self.item_emb = torch.nn.Embedding(item_num + 1, args.hidden_units, padding_idx=0)
         self.pos_emb = torch.nn.Embedding(args.maxlen + 1, args.hidden_units, padding_idx=0)
         if self.use_time_embedding:
-            self.time_emb = torch.nn.Embedding(args.time_bucket_count, args.hidden_units, padding_idx=0)
+            if self.time_encoding == "bucket":
+                self.time_emb = torch.nn.Embedding(args.time_bucket_count, args.hidden_units, padding_idx=0)
+            elif self.time_encoding == "continuous":
+                self.time_proj = torch.nn.Linear(getattr(args, "time_feature_dim", 2), args.hidden_units)
+            else:
+                raise ValueError(f"Unknown time_encoding: {self.time_encoding}")
         self.emb_dropout = torch.nn.Dropout(args.dropout_rate)
 
         self.attention_layernorms = torch.nn.ModuleList()
@@ -65,7 +71,13 @@ class SASRec(torch.nn.Module):
         if self.use_time_embedding:
             if time_seqs is None:
                 raise ValueError("time_seqs must be provided when use_time_embedding=True")
-            seqs += self.time_emb(torch.LongTensor(time_seqs).to(self.dev))
+            if self.time_encoding == "bucket":
+                seqs += self.time_emb(torch.LongTensor(time_seqs).to(self.dev))
+            else:
+                time_tensor = torch.as_tensor(time_seqs, dtype=torch.float32, device=self.dev)
+                if time_tensor.ndim == 2:
+                    time_tensor = time_tensor.unsqueeze(-1)
+                seqs += self.time_proj(time_tensor)
         seqs = self.emb_dropout(seqs)
 
         timeline_mask = torch.BoolTensor(log_seqs == 0).to(self.dev)

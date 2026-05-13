@@ -53,6 +53,13 @@ def parse_args():
     parser.add_argument("--time_features_path", type=str, default=None)
     parser.add_argument("--time_delta_column", type=str, default="delta_prev_seconds")
     parser.add_argument(
+        "--time_encoding",
+        type=str,
+        choices=["bucket", "continuous"],
+        default="bucket",
+        help="Time representation for time-aware SASRec. 'bucket' uses embedding lookup, 'continuous' uses log1p(delta) projected by a linear layer.",
+    )
+    parser.add_argument(
         "--time_bucket_boundaries",
         type=str,
         default="60,600,3600,86400",
@@ -106,7 +113,8 @@ def init_model(user_num: int, item_num: int, args):
     model.pos_emb.weight.data[0, :] = 0
     model.item_emb.weight.data[0, :] = 0
     if getattr(args, "use_time_embedding", False):
-        model.time_emb.weight.data[0, :] = 0
+        if getattr(args, "time_encoding", "bucket") == "bucket":
+            model.time_emb.weight.data[0, :] = 0
     return model
 
 
@@ -128,6 +136,9 @@ def serializable_args(args, dataset_stats: dict) -> dict:
     config["device"] = str(config["device"])
     config["dataset_stats"] = dataset_stats
     config["topks"] = parse_topks(config["topk_list"])
+    config["time_bucket_boundaries_raw"] = config.get("time_bucket_boundaries")
+    config["time_bucket_boundaries_parsed"] = dataset_stats.get("time_bucket_boundaries", [])
+    config["time_feature_dim"] = dataset_stats.get("time_feature_dim", 0)
     return config
 
 
@@ -237,12 +248,25 @@ def update_experiment_index(output_dir: Path, summary: dict):
     def pick(metrics_group: dict, mode: str, key: str):
         return metrics_group.get(mode, {}).get(key)
 
+    selection_metric = summary["config"].get("selection_metric")
+    primary_mode, _, primary_metric_key = selection_metric.split("_", 2)
+
+    best_valid_primary = pick(best_valid, primary_mode, primary_metric_key)
+    best_test_primary = pick(best_test, primary_mode, primary_metric_key)
+    last_valid_primary = pick(last_valid, primary_mode, primary_metric_key)
+    last_test_primary = pick(last_test, primary_mode, primary_metric_key)
+
     row = {
         "run_name": summary["run_name"],
         "run_dir": summary["run_dir"],
         "completed_at": summary["completed_at"],
         "mode": summary["mode"],
-        "selection_metric": summary["config"].get("selection_metric"),
+        "selection_metric": selection_metric,
+        "primary_metric_name": selection_metric,
+        "best_valid_primary": best_valid_primary,
+        "best_test_primary": best_test_primary,
+        "last_valid_primary": last_valid_primary,
+        "last_test_primary": last_test_primary,
         "best_epoch": summary.get("best_epoch"),
         "best_valid_ndcg": pick(best_valid, "full", "ndcg@10"),
         "best_valid_hr": pick(best_valid, "full", "hr@10"),
@@ -279,6 +303,10 @@ def update_experiment_index(output_dir: Path, summary: dict):
         "topk": summary["config"]["topk"],
         "topk_list": summary["config"]["topk_list"],
         "seed": summary["config"]["seed"],
+        "time_encoding": summary["config"].get("time_encoding"),
+        "time_bucket_boundaries_raw": summary["config"].get("time_bucket_boundaries_raw"),
+        "time_bucket_boundaries_parsed": summary["config"].get("time_bucket_boundaries_parsed"),
+        "time_feature_dim": summary["config"].get("time_feature_dim"),
     }
     for prefix, metrics in [("best_valid", best_valid), ("best_test", best_test), ("last_valid", last_valid), ("last_test", last_test)]:
         for mode, mode_metrics in metrics.items():
@@ -339,6 +367,7 @@ def main():
         use_time_embedding=args.use_time_embedding,
         time_features_path=args.time_features_path,
         time_delta_column=args.time_delta_column,
+        time_encoding=args.time_encoding,
         time_bucket_boundaries=args.time_bucket_boundaries,
         time_bucket_first_event_separate=args.time_bucket_first_event_separate,
         time_bucket_zero_gap_separate=args.time_bucket_zero_gap_separate,
@@ -349,8 +378,11 @@ def main():
     dataset_stats["batches_per_epoch"] = num_batch
     if time_bucket_meta.get("enabled"):
         args.time_bucket_count = time_bucket_meta["time_bucket_count"]
+        args.time_feature_dim = time_bucket_meta.get("time_feature_dim", 0)
+        args.time_encoding = time_bucket_meta.get("time_encoding", args.time_encoding)
     else:
         args.time_bucket_count = 0
+        args.time_feature_dim = 0
     config = serializable_args(args, dataset_stats)
     write_json(run_dir / "config.json", config)
     print_dataset_split_summary(dataset_stats)
@@ -461,6 +493,11 @@ def main():
         "checkpoint_last": str(final_ckpt),
         "metrics_history": str(metrics_path),
         "checkpoint_dir": str(eval_ckpt_dir) if args.save_every_eval else None,
+        "primary_metric_name": args.selection_metric,
+        "best_valid_primary": metric_value(best_row["valid"], args.selection_metric) if best_row else None,
+        "best_test_primary": metric_value(best_row["test"], args.selection_metric) if best_row else None,
+        "last_valid_primary": metric_value(last_valid_metrics, args.selection_metric) if last_valid_metrics else None,
+        "last_test_primary": metric_value(last_test_metrics, args.selection_metric) if last_test_metrics else None,
     }
     write_json(run_dir / "metrics_summary.json", summary)
     write_latest_run_pointer(output_dir, summary)
