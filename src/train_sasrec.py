@@ -50,6 +50,7 @@ def parse_args():
     parser.add_argument("--topk_list", type=str, default="5,10")
     parser.add_argument("--eval_protocol", type=str, choices=["full", "sampled", "both"], default="both")
     parser.add_argument("--use_time_embedding", action="store_true")
+    parser.add_argument("--use_time_attention_bias", action="store_true")
     parser.add_argument("--time_features_path", type=str, default=None)
     parser.add_argument("--time_delta_column", type=str, default="delta_prev_seconds")
     parser.add_argument(
@@ -139,6 +140,12 @@ def serializable_args(args, dataset_stats: dict) -> dict:
     config["time_bucket_boundaries_raw"] = config.get("time_bucket_boundaries")
     config["time_bucket_boundaries_parsed"] = dataset_stats.get("time_bucket_boundaries", [])
     config["time_feature_dim"] = dataset_stats.get("time_feature_dim", 0)
+    config["time_attention_bias_bucket_count"] = dataset_stats.get("time_attention_bias_bucket_count", 0)
+    config["time_modeling_mode"] = (
+        "attention_bias"
+        if config.get("use_time_attention_bias", False)
+        else ("input_embedding" if config.get("use_time_embedding", False) else "disabled")
+    )
     return config
 
 
@@ -234,6 +241,7 @@ def write_latest_run_pointer(output_dir: Path, summary: dict):
         "dataset_items": summary["config"]["dataset_stats"].get("items"),
         "train_only_users": summary["config"]["dataset_stats"].get("train_only_users"),
         "selection_metric": summary["config"].get("selection_metric"),
+        "time_modeling_mode": summary["config"].get("time_modeling_mode"),
     }
     write_json(latest_path, latest_payload)
 
@@ -304,9 +312,13 @@ def update_experiment_index(output_dir: Path, summary: dict):
         "topk_list": summary["config"]["topk_list"],
         "seed": summary["config"]["seed"],
         "time_encoding": summary["config"].get("time_encoding"),
+        "time_modeling_mode": summary["config"].get("time_modeling_mode"),
         "time_bucket_boundaries_raw": summary["config"].get("time_bucket_boundaries_raw"),
         "time_bucket_boundaries_parsed": summary["config"].get("time_bucket_boundaries_parsed"),
         "time_feature_dim": summary["config"].get("time_feature_dim"),
+        "use_time_embedding": summary["config"].get("use_time_embedding", False),
+        "use_time_attention_bias": summary["config"].get("use_time_attention_bias", False),
+        "time_attention_bias_bucket_count": summary["config"].get("time_attention_bias_bucket_count", 0),
     }
     for prefix, metrics in [("best_valid", best_valid), ("best_test", best_test), ("last_valid", last_valid), ("last_test", last_test)]:
         for mode, mode_metrics in metrics.items():
@@ -353,6 +365,8 @@ def print_eval_metrics(split: str, metrics_by_mode: dict, topks: list[int]):
 
 def main():
     args = parse_args()
+    if args.use_time_embedding and args.use_time_attention_bias:
+        raise ValueError("Use either --use_time_embedding or --use_time_attention_bias, not both at once.")
     topks = parse_topks(args.topk_list)
     args.selection_metric = normalize_selection_metric(args.selection_metric)
     validate_selection_metric(args.selection_metric, args, topks)
@@ -365,6 +379,7 @@ def main():
     dataset = load_sasrec_dataset(
         args.interactions_path,
         use_time_embedding=args.use_time_embedding,
+        use_time_attention_bias=args.use_time_attention_bias,
         time_features_path=args.time_features_path,
         time_delta_column=args.time_delta_column,
         time_encoding=args.time_encoding,
@@ -380,9 +395,13 @@ def main():
         args.time_bucket_count = time_bucket_meta["time_bucket_count"]
         args.time_feature_dim = time_bucket_meta.get("time_feature_dim", 0)
         args.time_encoding = time_bucket_meta.get("time_encoding", args.time_encoding)
+        args.time_bucket_boundaries_parsed = time_bucket_meta.get("time_bucket_boundaries", [])
+        args.time_attention_bias_bucket_count = time_bucket_meta.get("time_attention_bias_bucket_count", 0)
     else:
         args.time_bucket_count = 0
         args.time_feature_dim = 0
+        args.time_bucket_boundaries_parsed = []
+        args.time_attention_bias_bucket_count = 0
     config = serializable_args(args, dataset_stats)
     write_json(run_dir / "config.json", config)
     print_dataset_split_summary(dataset_stats)

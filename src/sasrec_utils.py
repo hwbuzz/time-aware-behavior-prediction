@@ -30,6 +30,10 @@ def time_bucket_count(boundaries: list[float], separate_first_event: bool = True
     return 1 + int(separate_first_event) + int(separate_zero_gap) + len(boundaries) + 1
 
 
+def time_gap_bucket_count(boundaries: list[float], separate_zero_gap: bool = True) -> int:
+    return int(separate_zero_gap) + len(boundaries) + 1
+
+
 def bucketize_time_delta(
     delta_seconds: float,
     event_idx: int,
@@ -55,6 +59,10 @@ def bucketize_time_delta(
 
 def default_time_features_path(interactions_path: str) -> str:
     return str(Path(interactions_path).resolve().with_name("events_encoded_time_features.csv"))
+
+
+def encode_raw_time_delta(delta_seconds: float) -> float:
+    return float(max(delta_seconds, 0.0))
 
 
 def encode_continuous_time_features(delta_seconds: float, event_idx: int) -> tuple[float, float]:
@@ -96,6 +104,8 @@ def load_time_feature_sequences(
                 )
             elif time_encoding == "continuous":
                 time_value = encode_continuous_time_features(delta_seconds, event_idx)
+            elif time_encoding == "raw":
+                time_value = encode_raw_time_delta(delta_seconds)
             else:
                 raise ValueError(f"Unknown time_encoding: {time_encoding}")
             rows_by_user[user_id].append((event_idx, item_id, time_value))
@@ -123,7 +133,7 @@ def load_time_feature_sequences(
             if time_encoding == "bucket"
             else 0
         ),
-        "time_feature_dim": 1 if time_encoding == "bucket" else 2,
+        "time_feature_dim": 1 if time_encoding in {"bucket", "raw"} else 2,
     }
     return item_sequences, time_sequences, bucket_meta
 
@@ -131,6 +141,7 @@ def load_time_feature_sequences(
 def load_sasrec_dataset(
     interactions_path: str,
     use_time_embedding: bool = False,
+    use_time_attention_bias: bool = False,
     time_features_path: str | None = None,
     time_delta_column: str = "delta_prev_seconds",
     time_encoding: str = "bucket",
@@ -154,16 +165,26 @@ def load_sasrec_dataset(
 
     train_time, valid_time, test_time = {}, {}, {}
     time_bucket_meta = {"enabled": False}
-    if use_time_embedding:
+    if use_time_embedding or use_time_attention_bias:
         boundaries = parse_time_bucket_boundaries(time_bucket_boundaries)
         resolved_time_features_path = time_features_path or default_time_features_path(interactions_path)
+        effective_time_encoding = "raw" if use_time_attention_bias else time_encoding
         time_item_sequences, time_bucket_sequences, time_bucket_meta = load_time_feature_sequences(
             resolved_time_features_path,
             time_delta_column=time_delta_column,
-            time_encoding=time_encoding,
+            time_encoding=effective_time_encoding,
             boundaries=boundaries,
             separate_first_event=time_bucket_first_event_separate,
             separate_zero_gap=time_bucket_zero_gap_separate,
+        )
+        time_bucket_meta["use_time_attention_bias"] = bool(use_time_attention_bias)
+        time_bucket_meta["time_attention_bias_bucket_count"] = (
+            time_gap_bucket_count(
+                boundaries,
+                separate_zero_gap=time_bucket_zero_gap_separate,
+            )
+            if use_time_attention_bias
+            else 0
         )
         for user_id, seq in user_sequences.items():
             time_items = time_item_sequences.get(user_id)
@@ -178,7 +199,11 @@ def load_sasrec_dataset(
 
     train, valid, test = {}, {}, {}
     for user_id, seq in user_sequences.items():
-        time_seq = time_bucket_sequences.get(user_id, [0] * len(seq)) if use_time_embedding else [0] * len(seq)
+        time_seq = (
+            time_bucket_sequences.get(user_id, [0] * len(seq))
+            if (use_time_embedding or use_time_attention_bias)
+            else [0] * len(seq)
+        )
         if len(seq) < 4:
             train[user_id], valid[user_id], test[user_id] = seq, [], []
             train_time[user_id], valid_time[user_id], test_time[user_id] = time_seq, [], []
@@ -225,14 +250,21 @@ def summarize_dataset_splits(dataset):
     if len(rest) >= 4:
         time_bucket_meta = rest[3]
         if time_bucket_meta.get("enabled"):
-            summary["time_embedding_enabled"] = True
+            summary["time_embedding_enabled"] = not time_bucket_meta.get("use_time_attention_bias", False)
             summary["time_delta_column"] = time_bucket_meta.get("time_delta_column")
             summary["time_encoding"] = time_bucket_meta.get("time_encoding")
             summary["time_bucket_boundaries"] = time_bucket_meta.get("time_bucket_boundaries", [])
             summary["time_bucket_count"] = time_bucket_meta.get("time_bucket_count")
             summary["time_feature_dim"] = time_bucket_meta.get("time_feature_dim")
+            summary["use_time_attention_bias"] = time_bucket_meta.get("use_time_attention_bias", False)
+            summary["time_attention_bias_bucket_count"] = time_bucket_meta.get("time_attention_bias_bucket_count", 0)
+            summary["time_modeling_mode"] = (
+                "attention_bias" if time_bucket_meta.get("use_time_attention_bias", False) else "input_embedding"
+            )
         else:
             summary["time_embedding_enabled"] = False
+            summary["use_time_attention_bias"] = False
+            summary["time_modeling_mode"] = "disabled"
     return summary
 
 

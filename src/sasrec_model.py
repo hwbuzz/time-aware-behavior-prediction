@@ -34,7 +34,10 @@ class SASRec(torch.nn.Module):
         self.dev = args.device
         self.norm_first = args.norm_first
         self.use_time_embedding = getattr(args, "use_time_embedding", False)
+        self.use_time_attention_bias = getattr(args, "use_time_attention_bias", False)
         self.time_encoding = getattr(args, "time_encoding", "bucket")
+        self.num_heads = args.num_heads
+        self.time_bucket_zero_gap_separate = getattr(args, "time_bucket_zero_gap_separate", True)
 
         self.item_emb = torch.nn.Embedding(item_num + 1, args.hidden_units, padding_idx=0)
         self.pos_emb = torch.nn.Embedding(args.maxlen + 1, args.hidden_units, padding_idx=0)
@@ -45,6 +48,15 @@ class SASRec(torch.nn.Module):
                 self.time_proj = torch.nn.Linear(getattr(args, "time_feature_dim", 2), args.hidden_units)
             else:
                 raise ValueError(f"Unknown time_encoding: {self.time_encoding}")
+        if self.use_time_attention_bias:
+            self.time_attn_boundaries = torch.tensor(
+                getattr(args, "time_bucket_boundaries_parsed", []),
+                dtype=torch.float32,
+            )
+            self.time_attn_bias = torch.nn.Embedding(
+                getattr(args, "time_attention_bias_bucket_count", 0),
+                1,
+            )
         self.emb_dropout = torch.nn.Dropout(args.dropout_rate)
 
         self.attention_layernorms = torch.nn.ModuleList()
@@ -60,6 +72,33 @@ class SASRec(torch.nn.Module):
             )
             self.forward_layernorms.append(torch.nn.LayerNorm(args.hidden_units, eps=1e-8))
             self.forward_layers.append(PointWiseFeedForward(args.hidden_units, args.dropout_rate))
+
+    def _build_attention_mask(self, time_seqs: np.ndarray | None, seq_len: int) -> torch.Tensor:
+        future_mask = torch.zeros((seq_len, seq_len), dtype=torch.float32, device=self.dev)
+        future_mask.masked_fill_(
+            torch.triu(torch.ones((seq_len, seq_len), dtype=torch.bool, device=self.dev), diagonal=1),
+            float("-inf"),
+        )
+        if not self.use_time_attention_bias:
+            return future_mask
+        if time_seqs is None:
+            raise ValueError("time_seqs must be provided when use_time_attention_bias=True")
+
+        time_tensor = torch.as_tensor(time_seqs, dtype=torch.float32, device=self.dev)
+        if time_tensor.ndim == 3:
+            time_tensor = time_tensor[..., 0]
+        gap = time_tensor.unsqueeze(2) - time_tensor.unsqueeze(1)
+        gap = torch.clamp(gap, min=0.0)
+
+        boundaries = self.time_attn_boundaries.to(self.dev)
+        bucket_idx = torch.bucketize(gap, boundaries, right=False)
+        if self.time_bucket_zero_gap_separate:
+            bucket_idx = bucket_idx + (gap > 0).long()
+
+        bias = self.time_attn_bias(bucket_idx).squeeze(-1)
+        bias = bias.unsqueeze(1).repeat(1, self.num_heads, 1, 1)
+        bias = bias.reshape(-1, seq_len, seq_len)
+        return bias + future_mask.unsqueeze(0)
 
     def log2feats(self, log_seqs: np.ndarray, time_seqs: np.ndarray | None = None) -> torch.Tensor:
         seqs = self.item_emb(torch.LongTensor(log_seqs).to(self.dev))
@@ -84,7 +123,7 @@ class SASRec(torch.nn.Module):
         seqs *= ~timeline_mask.unsqueeze(-1)
 
         tl = seqs.shape[1]
-        attention_mask = ~torch.tril(torch.ones((tl, tl), dtype=torch.bool, device=self.dev))
+        attention_mask = self._build_attention_mask(time_seqs, tl)
 
         for i, attention_layer in enumerate(self.attention_layers):
             seqs = torch.transpose(seqs, 0, 1)
