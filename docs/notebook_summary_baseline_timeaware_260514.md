@@ -153,3 +153,26 @@
 - `05`: `refine_ml50_do035` + `delta_start` bucket/continuous 비교
 - `06`: `refine_ml50_do035` + attention bias time-aware
 - `07`: `anchor_ml20` + attention bias time-aware
+- `08`: `refine_ml50_do035` + attention bias bucket-boundary refinement
+
+### `sasrec_timeaware_bpi2012_colab_train_08_260515.ipynb`
+- **`refine_ml50_do035` baseline** 위에서 attention bias bucket 경계를 한 번 더 세분화해보는 refinement notebook.
+- 목적:
+  - 기존 attention bias:
+    - `attnbias_dstart_ml50_do035_b9_*`
+  - 새 attention bias:
+    - `attnbias_dstart_ml50_do035_b10_*`
+  를 baseline과 함께 비교하는 것.
+- 구조:
+  - baseline 재사용
+  - 기존 attention-bias 결과 재사용
+  - 새로 학습:
+    - `attnbias_dstart_ml50_do035_b10_s42`
+    - `attnbias_dstart_ml50_do035_b10_s2024`
+    - `attnbias_dstart_ml50_do035_b10_s7`
+- output dir:
+  - `outputs/sasrec_timeaware_attention_bias_refine_ndcg10`
+  - `outputs/sasrec_timeaware_attention_bias_refine_ndcg5`
+- 의미:
+  - attention bias가 가장 유망했으므로,
+  - **짧은 gap 구간을 더 촘촘히 나눈 bucket 경계가 성능을 더 높일 수 있는지** 확인하는 실험이다.
