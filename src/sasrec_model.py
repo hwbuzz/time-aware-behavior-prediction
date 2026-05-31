@@ -35,6 +35,7 @@ class SASRec(torch.nn.Module):
         self.norm_first = args.norm_first
         self.use_time_embedding = getattr(args, "use_time_embedding", False)
         self.use_time_attention_bias = getattr(args, "use_time_attention_bias", False)
+        self.enable_time_prediction = getattr(args, "enable_time_prediction", False)
         self.time_encoding = getattr(args, "time_encoding", "bucket")
         self.num_heads = args.num_heads
         self.time_bucket_zero_gap_separate = getattr(args, "time_bucket_zero_gap_separate", True)
@@ -56,6 +57,13 @@ class SASRec(torch.nn.Module):
             self.time_attn_bias = torch.nn.Embedding(
                 getattr(args, "time_attention_bias_bucket_count", 0),
                 1,
+            )
+        if self.enable_time_prediction:
+            self.time_head = torch.nn.Sequential(
+                torch.nn.Linear(args.hidden_units, args.hidden_units),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(args.dropout_rate),
+                torch.nn.Linear(args.hidden_units, 1),
             )
         self.emb_dropout = torch.nn.Dropout(args.dropout_rate)
 
@@ -148,10 +156,20 @@ class SASRec(torch.nn.Module):
         neg_embs = self.item_emb(torch.LongTensor(neg_seqs).to(self.dev))
         pos_logits = (log_feats * pos_embs).sum(dim=-1)
         neg_logits = (log_feats * neg_embs).sum(dim=-1)
-        return pos_logits, neg_logits
+        if not self.enable_time_prediction:
+            return pos_logits, neg_logits
+        time_logits = self.time_head(log_feats).squeeze(-1)
+        return pos_logits, neg_logits, time_logits
 
     def predict(self, user_ids, log_seqs, item_indices, time_seqs=None):
         log_feats = self.log2feats(log_seqs, time_seqs=time_seqs)
         final_feat = log_feats[:, -1, :]
         item_embs = self.item_emb(torch.LongTensor(item_indices).to(self.dev))
         return item_embs.matmul(final_feat.unsqueeze(-1)).squeeze(-1)
+
+    def predict_next_time(self, user_ids, log_seqs, time_seqs=None):
+        if not self.enable_time_prediction:
+            raise ValueError("Time prediction head is disabled. Enable it with --enable_time_prediction.")
+        log_feats = self.log2feats(log_seqs, time_seqs=time_seqs)
+        final_feat = log_feats[:, -1, :]
+        return self.time_head(final_feat).squeeze(-1)

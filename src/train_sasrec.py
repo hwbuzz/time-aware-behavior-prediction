@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import csv
@@ -78,6 +78,11 @@ def parse_args():
         default=True,
         help="Whether to allocate a dedicated bucket for non-first events with zero time gap.",
     )
+    parser.add_argument("--enable_time_prediction", action="store_true")
+    parser.add_argument("--time_prediction_target", type=str, default="delta_next_seconds")
+    parser.add_argument("--time_loss_weight", type=float, default=1.0)
+    parser.add_argument("--time_loss_type", type=str, choices=["huber", "mse"], default="huber")
+    parser.add_argument("--time_target_transform", type=str, choices=["none", "log1p"], default="log1p")
     parser.add_argument(
         "--selection_metric",
         type=str,
@@ -146,6 +151,7 @@ def serializable_args(args, dataset_stats: dict) -> dict:
         if config.get("use_time_attention_bias", False)
         else ("input_embedding" if config.get("use_time_embedding", False) else "disabled")
     )
+    config["time_prediction_enabled"] = config.get("enable_time_prediction", False)
     return config
 
 
@@ -171,21 +177,53 @@ def flatten_metrics(prefix: str, metrics_by_mode: dict) -> dict:
     return row
 
 
-def normalize_selection_metric(selection_metric: str) -> str:
+def _selection_metric_groups(args, topks: list[int]) -> tuple[set[str], set[str]]:
+    ranking_metric_keys = {f"ndcg@{k}" for k in topks} | {f"hr@{k}" for k in topks} | {
+        "mrr",
+        "mean_rank",
+        "median_rank",
+        "num_eval_users",
+    }
+    shared_metric_keys = {f"top{k}_accuracy" for k in topks} | {
+        "accuracy",
+        "top1_accuracy",
+        "macro_f1",
+    }
+    if args.enable_time_prediction:
+        shared_metric_keys |= {"time_mae", "time_rmse", "time_median_ae"}
+    return ranking_metric_keys, shared_metric_keys
+
+
+def normalize_selection_metric(selection_metric: str, args, topks: list[int]) -> str:
     metric = selection_metric.strip()
-    if "_" not in metric:
+    ranking_metric_keys, shared_metric_keys = _selection_metric_groups(args, topks)
+
+    if metric in shared_metric_keys:
+        return f"shared_valid_{metric}"
+    if metric in ranking_metric_keys:
         return f"full_valid_{metric}"
+
     if metric.count("_") == 1:
         mode, metric_key = metric.split("_", 1)
-        return f"{mode}_valid_{metric_key}"
+        if mode in {"full", "sampled", "shared"}:
+            metric = f"{mode}_valid_{metric_key}"
+        else:
+            return metric
+    elif "_" not in metric:
+        return f"full_valid_{metric}"
+
+    mode, split, metric_key = metric.split("_", 2)
+    if metric_key in shared_metric_keys:
+        return f"shared_{split}_{metric_key}"
     return metric
 
 
 def validate_selection_metric(selection_metric: str, args, topks: list[int]):
     mode, split, metric_key = selection_metric.split("_", 2)
-    if mode not in {"full", "sampled"}:
+    ranking_metric_keys, shared_metric_keys = _selection_metric_groups(args, topks)
+    if mode not in {"full", "sampled", "shared"}:
         raise ValueError(
-            f"selection_metric must start with 'full_' or 'sampled_'. Got: {selection_metric}"
+            f"selection_metric must resolve to 'full_', 'sampled_', or 'shared_'. Got: {selection_metric}"
         )
     if split != "valid":
         raise ValueError(
@@ -193,28 +231,44 @@ def validate_selection_metric(selection_metric: str, args, topks: list[int]):
         )
     if mode == "sampled" and args.eval_protocol == "full":
         raise ValueError(
-            "selection_metric requests sampled metrics, but eval_protocol=full only computes full metrics."
+            "selection_metric requests sampled metrics, but eval_protocol=full only computes sampled metrics."
         )
     if mode == "full" and args.eval_protocol == "sampled":
         raise ValueError(
-            "selection_metric requests full metrics, but eval_protocol=sampled only computes sampled metrics."
+            "selection_metric requests full metrics, but eval_protocol=sampled only computes full metrics."
         )
-    valid_metric_keys = {f"ndcg@{k}" for k in topks} | {f"hr@{k}" for k in topks} | {
-        "mrr",
-        "mean_rank",
-        "median_rank",
-        "num_eval_users",
-    }
+    valid_metric_keys = ranking_metric_keys | shared_metric_keys
     if metric_key not in valid_metric_keys:
         raise ValueError(
             f"selection_metric '{selection_metric}' is not compatible with topk_list={topks}. "
             f"Available metric keys: {sorted(valid_metric_keys)}"
         )
+    if mode == "shared" and metric_key not in shared_metric_keys:
+        raise ValueError(
+            f"selection_metric '{selection_metric}' must use a shared metric. Available shared metrics: {sorted(shared_metric_keys)}"
+        )
+    if mode in {"full", "sampled"} and metric_key in shared_metric_keys:
+        raise ValueError(
+            f"selection_metric '{selection_metric}' uses a shared metric. Use the bare metric name instead, for example '{metric_key}'."
+        )
+
+
+LOWER_IS_BETTER_METRICS = {"time_mae", "time_rmse", "time_median_ae", "mean_rank", "median_rank"}
 
 
 def metric_value(metrics_by_mode: dict, metric_name: str) -> float:
     mode, split, metric_key = metric_name.split("_", 2)
-    return float(metrics_by_mode[mode][metric_key])
+    if mode in metrics_by_mode and metric_key in metrics_by_mode[mode]:
+        return float(metrics_by_mode[mode][metric_key])
+    if "shared" in metrics_by_mode and metric_key in metrics_by_mode["shared"]:
+        return float(metrics_by_mode["shared"][metric_key])
+    raise KeyError(f"Metric {metric_name} not found in evaluation results.")
+
+
+def selection_metric_score(metrics_by_mode: dict, metric_name: str) -> float:
+    raw_value = metric_value(metrics_by_mode, metric_name)
+    metric_key = metric_name.split("_", 2)[2]
+    return -raw_value if metric_key in LOWER_IS_BETTER_METRICS else raw_value
 
 
 def summarize_eval_result(metrics_by_mode: dict) -> dict:
@@ -242,6 +296,7 @@ def write_latest_run_pointer(output_dir: Path, summary: dict):
         "train_only_users": summary["config"]["dataset_stats"].get("train_only_users"),
         "selection_metric": summary["config"].get("selection_metric"),
         "time_modeling_mode": summary["config"].get("time_modeling_mode"),
+        "time_prediction_enabled": summary["config"].get("time_prediction_enabled", False),
     }
     write_json(latest_path, latest_payload)
 
@@ -254,7 +309,9 @@ def update_experiment_index(output_dir: Path, summary: dict):
     last_test = summary.get("last_test", {})
 
     def pick(metrics_group: dict, mode: str, key: str):
-        return metrics_group.get(mode, {}).get(key)
+        if key in metrics_group.get(mode, {}):
+            return metrics_group.get(mode, {}).get(key)
+        return metrics_group.get("shared", {}).get(key)
 
     selection_metric = summary["config"].get("selection_metric")
     primary_mode, _, primary_metric_key = selection_metric.split("_", 2)
@@ -278,15 +335,27 @@ def update_experiment_index(output_dir: Path, summary: dict):
         "best_epoch": summary.get("best_epoch"),
         "best_valid_ndcg": pick(best_valid, "full", "ndcg@10"),
         "best_valid_hr": pick(best_valid, "full", "hr@10"),
+        "best_valid_accuracy": pick(best_valid, "full", "accuracy"),
+        "best_valid_macro_f1": pick(best_valid, "full", "macro_f1"),
+        "best_valid_time_mae": pick(best_valid, "full", "time_mae"),
         "best_valid_mrr": pick(best_valid, "full", "mrr"),
         "best_test_ndcg": pick(best_test, "full", "ndcg@10"),
         "best_test_hr": pick(best_test, "full", "hr@10"),
+        "best_test_accuracy": pick(best_test, "full", "accuracy"),
+        "best_test_macro_f1": pick(best_test, "full", "macro_f1"),
+        "best_test_time_mae": pick(best_test, "full", "time_mae"),
         "best_test_mrr": pick(best_test, "full", "mrr"),
         "last_valid_ndcg": pick(last_valid, "full", "ndcg@10"),
         "last_valid_hr": pick(last_valid, "full", "hr@10"),
+        "last_valid_accuracy": pick(last_valid, "full", "accuracy"),
+        "last_valid_macro_f1": pick(last_valid, "full", "macro_f1"),
+        "last_valid_time_mae": pick(last_valid, "full", "time_mae"),
         "last_valid_mrr": pick(last_valid, "full", "mrr"),
         "last_test_ndcg": pick(last_test, "full", "ndcg@10"),
         "last_test_hr": pick(last_test, "full", "hr@10"),
+        "last_test_accuracy": pick(last_test, "full", "accuracy"),
+        "last_test_macro_f1": pick(last_test, "full", "macro_f1"),
+        "last_test_time_mae": pick(last_test, "full", "time_mae"),
         "last_test_mrr": pick(last_test, "full", "mrr"),
         "checkpoint_best": summary.get("checkpoint_best"),
         "checkpoint_last": summary.get("checkpoint_last"),
@@ -319,6 +388,11 @@ def update_experiment_index(output_dir: Path, summary: dict):
         "use_time_embedding": summary["config"].get("use_time_embedding", False),
         "use_time_attention_bias": summary["config"].get("use_time_attention_bias", False),
         "time_attention_bias_bucket_count": summary["config"].get("time_attention_bias_bucket_count", 0),
+        "enable_time_prediction": summary["config"].get("enable_time_prediction", False),
+        "time_prediction_target": summary["config"].get("time_prediction_target"),
+        "time_loss_weight": summary["config"].get("time_loss_weight"),
+        "time_loss_type": summary["config"].get("time_loss_type"),
+        "time_target_transform": summary["config"].get("time_target_transform"),
     }
     for prefix, metrics in [("best_valid", best_valid), ("best_test", best_test), ("last_valid", last_valid), ("last_test", last_test)]:
         for mode, mode_metrics in metrics.items():
@@ -332,19 +406,29 @@ def update_experiment_index(output_dir: Path, summary: dict):
         writer.writerow(row)
 
 
-def train_one_epoch(model, sampler, optimizer, criterion, args, num_batch: int):
+def train_one_epoch(model, sampler, optimizer, item_criterion, time_criterion, args, num_batch: int):
     model.train()
     total_loss = 0.0
     for _ in range(num_batch):
-        user, seq, pos, neg, time_seq = sampler.sample()
-        pos_logits, neg_logits = model(user, seq, pos, neg, time_seq)
+        batch = sampler.sample()
+        if args.enable_time_prediction:
+            user, seq, pos, neg, time_seq, next_time_target = batch
+            pos_logits, neg_logits, time_logits = model(user, seq, pos, neg, time_seq)
+            time_targets = torch.as_tensor(next_time_target, dtype=torch.float32, device=args.device)
+        else:
+            user, seq, pos, neg, time_seq = batch
+            pos_logits, neg_logits = model(user, seq, pos, neg, time_seq)
+            time_logits = None
+            time_targets = None
         pos_labels = torch.ones(pos_logits.shape, device=args.device)
         neg_labels = torch.zeros(neg_logits.shape, device=args.device)
         indices = np.where(pos != 0)
 
         optimizer.zero_grad()
-        loss = criterion(pos_logits[indices], pos_labels[indices])
-        loss += criterion(neg_logits[indices], neg_labels[indices])
+        loss = item_criterion(pos_logits[indices], pos_labels[indices])
+        loss += item_criterion(neg_logits[indices], neg_labels[indices])
+        if args.enable_time_prediction and time_logits is not None and time_targets is not None:
+            loss += args.time_loss_weight * time_criterion(time_logits[indices], time_targets[indices])
         for param in model.item_emb.parameters():
             loss += args.l2_emb * torch.sum(param ** 2)
         loss.backward()
@@ -354,7 +438,22 @@ def train_one_epoch(model, sampler, optimizer, criterion, args, num_batch: int):
 
 
 def print_eval_metrics(split: str, metrics_by_mode: dict, topks: list[int]):
+    shared_metrics = metrics_by_mode.get("shared")
+    if shared_metrics is not None:
+        pieces = [f"{split} [shared]"]
+        for k in topks:
+            pieces.append(f"Top{k}Acc: {shared_metrics[f'top{k}_accuracy']:.4f}")
+        pieces.append(f"Acc: {shared_metrics['accuracy']:.4f}")
+        pieces.append(f"MacroF1: {shared_metrics['macro_f1']:.4f}")
+        if "time_mae" in shared_metrics:
+            pieces.append(f"TimeMAE: {shared_metrics['time_mae']:.4f}")
+            pieces.append(f"TimeRMSE: {shared_metrics['time_rmse']:.4f}")
+            pieces.append(f"TimeMedAE: {shared_metrics['time_median_ae']:.4f}")
+        print(', '.join(pieces))
+
     for mode, metrics in metrics_by_mode.items():
+        if mode == "shared":
+            continue
         pieces = [f"{split} [{mode}]"]
         for k in topks:
             pieces.append(f"NDCG@{k}: {metrics[f'ndcg@{k}']:.4f}")
@@ -368,7 +467,7 @@ def main():
     if args.use_time_embedding and args.use_time_attention_bias:
         raise ValueError("Use either --use_time_embedding or --use_time_attention_bias, not both at once.")
     topks = parse_topks(args.topk_list)
-    args.selection_metric = normalize_selection_metric(args.selection_metric)
+    args.selection_metric = normalize_selection_metric(args.selection_metric, args, topks)
     validate_selection_metric(args.selection_metric, args, topks)
     set_seed(args.seed)
     output_dir = Path(args.output_dir)
@@ -386,6 +485,8 @@ def main():
         time_bucket_boundaries=args.time_bucket_boundaries,
         time_bucket_first_event_separate=args.time_bucket_first_event_separate,
         time_bucket_zero_gap_separate=args.time_bucket_zero_gap_separate,
+        enable_time_prediction=args.enable_time_prediction,
+        time_prediction_target=args.time_prediction_target,
     )
     user_train, _, _, user_num, item_num, user_train_time, _, _, time_bucket_meta = dataset
     num_batch = (len(user_train) - 1) // args.batch_size + 1
@@ -445,9 +546,13 @@ def main():
         args.batch_size,
         args.maxlen,
         user_train_time=user_train_time,
+        user_train_next_time=time_bucket_meta.get("next_time_targets", {}).get("train", {}),
+        enable_time_prediction=args.enable_time_prediction,
+        time_target_transform=args.time_target_transform,
         seed=args.seed,
     )
-    criterion = torch.nn.BCEWithLogitsLoss()
+    item_criterion = torch.nn.BCEWithLogitsLoss()
+    time_criterion = torch.nn.SmoothL1Loss() if args.time_loss_type == "huber" else torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.98))
 
     best_score = float("-inf")
@@ -461,7 +566,7 @@ def main():
         eval_ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     for epoch in range(1, args.num_epochs + 1):
-        loss = train_one_epoch(model, sampler, optimizer, criterion, args, num_batch)
+        loss = train_one_epoch(model, sampler, optimizer, item_criterion, time_criterion, args, num_batch)
         print(f"epoch={epoch}, loss={loss:.4f}")
 
         if epoch % args.eval_every == 0 or epoch == args.num_epochs:
@@ -482,7 +587,7 @@ def main():
                 torch.save(model.state_dict(), eval_ckpt)
                 print(f"saved eval checkpoint: {eval_ckpt}")
 
-            selection_score = metric_value(valid_metrics, args.selection_metric)
+            selection_score = selection_metric_score(valid_metrics, args.selection_metric)
             if selection_score > best_score:
                 best_score = selection_score
                 best_row = {
@@ -525,3 +630,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -194,11 +194,13 @@ def add_time_features(events: pd.DataFrame) -> pd.DataFrame:
     if result.empty:
         result["delta_prev_seconds"] = pd.Series(dtype="float64")
         result["delta_start_seconds"] = pd.Series(dtype="float64")
+        result["delta_next_seconds"] = pd.Series(dtype="float64")
         return result
 
     timestamps = result.groupby("case_id")["timestamp"]
     result["delta_prev_seconds"] = timestamps.diff().dt.total_seconds().fillna(0.0)
     result["delta_start_seconds"] = (result["timestamp"] - timestamps.transform("min")).dt.total_seconds()
+    result["delta_next_seconds"] = (-timestamps.diff(-1).dt.total_seconds()).fillna(0.0)
     return result
 
 
