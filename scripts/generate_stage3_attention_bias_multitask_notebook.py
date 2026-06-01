@@ -134,7 +134,25 @@ def main() -> None:
     )
 
     cells.append(code_cell("!pip install -r requirements_colab.txt"))
-    cells.append(code_cell("!ls \"$DATA_DIR\""))
+    cells.append(
+        markdown_cell(
+            """
+            ## Prepare Stage 3 processed dataset
+
+            This notebook regenerates the Stage 3 dataset into the versioned Drive folder
+            before training, so the run does not depend on any stale local processed files.
+            """
+        )
+    )
+    cells.append(
+        code_cell(
+            """
+            %cd /content/time-aware-behavior-prediction
+            !python scripts/regenerate_stage3_processed_dataset.py --output-dir "$DATA_DIR" --backup-existing
+            !ls "$DATA_DIR"
+            """
+        )
+    )
     cells.append(
         code_cell(
             "%cd /content/time-aware-behavior-prediction\n"
