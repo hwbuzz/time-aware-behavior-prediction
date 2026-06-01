@@ -173,7 +173,10 @@ def flatten_metrics(prefix: str, metrics_by_mode: dict) -> dict:
     row = {}
     for mode, metrics in metrics_by_mode.items():
         for key, value in metrics.items():
-            row[f"{mode}_{prefix}_{key}"] = value
+            if mode == "task":
+                row[f"{prefix}_{key}"] = value
+            else:
+                row[f"{mode}_{prefix}_{key}"] = value
     return row
 
 
@@ -184,46 +187,59 @@ def _selection_metric_groups(args, topks: list[int]) -> tuple[set[str], set[str]
         "median_rank",
         "num_eval_users",
     }
-    shared_metric_keys = {f"top{k}_accuracy" for k in topks} | {
+    task_metric_keys = {f"top{k}_accuracy" for k in topks} | {
         "accuracy",
         "top1_accuracy",
         "macro_f1",
     }
     if args.enable_time_prediction:
-        shared_metric_keys |= {"time_mae", "time_rmse", "time_median_ae"}
-    return ranking_metric_keys, shared_metric_keys
+        task_metric_keys |= {"time_mae", "time_rmse", "time_median_ae"}
+    return ranking_metric_keys, task_metric_keys
 
 
 def normalize_selection_metric(selection_metric: str, args, topks: list[int]) -> str:
     metric = selection_metric.strip()
-    ranking_metric_keys, shared_metric_keys = _selection_metric_groups(args, topks)
+    ranking_metric_keys, task_metric_keys = _selection_metric_groups(args, topks)
 
-    if metric in shared_metric_keys:
-        return f"shared_valid_{metric}"
+    if metric in task_metric_keys:
+        return f"valid_{metric}"
     if metric in ranking_metric_keys:
         return f"full_valid_{metric}"
 
+    if metric.startswith("valid_"):
+        return metric
+
     if metric.count("_") == 1:
         mode, metric_key = metric.split("_", 1)
-        if mode in {"full", "sampled", "shared"}:
+        if mode in {"full", "sampled"}:
             metric = f"{mode}_valid_{metric_key}"
+        elif mode == "valid":
+            return metric
         else:
             return metric
     elif "_" not in metric:
         return f"full_valid_{metric}"
 
     mode, split, metric_key = metric.split("_", 2)
-    if metric_key in shared_metric_keys:
-        return f"shared_{split}_{metric_key}"
     return metric
 
 
 def validate_selection_metric(selection_metric: str, args, topks: list[int]):
-    mode, split, metric_key = selection_metric.split("_", 2)
-    ranking_metric_keys, shared_metric_keys = _selection_metric_groups(args, topks)
-    if mode not in {"full", "sampled", "shared"}:
+    parts = selection_metric.split("_")
+    if len(parts) == 2 and parts[0] == "valid":
+        mode = "task"
+        split = "valid"
+        metric_key = parts[1]
+    elif len(parts) == 3:
+        mode, split, metric_key = parts
+    else:
         raise ValueError(
-            f"selection_metric must resolve to 'full_', 'sampled_', or 'shared_'. Got: {selection_metric}"
+            f"selection_metric must resolve to 'full_valid_*', 'sampled_valid_*', or 'valid_*'. Got: {selection_metric}"
+        )
+    ranking_metric_keys, task_metric_keys = _selection_metric_groups(args, topks)
+    if mode not in {"full", "sampled", "task"}:
+        raise ValueError(
+            f"selection_metric must resolve to 'full_', 'sampled_', or 'valid_'. Got: {selection_metric}"
         )
     if split != "valid":
         raise ValueError(
@@ -237,19 +253,19 @@ def validate_selection_metric(selection_metric: str, args, topks: list[int]):
         raise ValueError(
             "selection_metric requests full metrics, but eval_protocol=sampled only computes full metrics."
         )
-    valid_metric_keys = ranking_metric_keys | shared_metric_keys
+    valid_metric_keys = ranking_metric_keys | task_metric_keys
     if metric_key not in valid_metric_keys:
         raise ValueError(
             f"selection_metric '{selection_metric}' is not compatible with topk_list={topks}. "
             f"Available metric keys: {sorted(valid_metric_keys)}"
         )
-    if mode == "shared" and metric_key not in shared_metric_keys:
+    if mode == "task" and metric_key not in task_metric_keys:
         raise ValueError(
-            f"selection_metric '{selection_metric}' must use a shared metric. Available shared metrics: {sorted(shared_metric_keys)}"
+            f"selection_metric '{selection_metric}' must use a task metric. Available task metrics: {sorted(task_metric_keys)}"
         )
-    if mode in {"full", "sampled"} and metric_key in shared_metric_keys:
+    if mode in {"full", "sampled"} and metric_key in task_metric_keys:
         raise ValueError(
-            f"selection_metric '{selection_metric}' uses a shared metric. Use the bare metric name instead, for example '{metric_key}'."
+            f"selection_metric '{selection_metric}' uses a task metric. Use the bare metric name instead, for example '{metric_key}'."
         )
 
 
@@ -257,11 +273,14 @@ LOWER_IS_BETTER_METRICS = {"time_mae", "time_rmse", "time_median_ae", "mean_rank
 
 
 def metric_value(metrics_by_mode: dict, metric_name: str) -> float:
-    mode, split, metric_key = metric_name.split("_", 2)
+    parts = metric_name.split("_")
+    if len(parts) == 2 and parts[0] == "valid":
+        mode = "task"
+        metric_key = parts[1]
+    else:
+        mode, _, metric_key = metric_name.split("_", 2)
     if mode in metrics_by_mode and metric_key in metrics_by_mode[mode]:
         return float(metrics_by_mode[mode][metric_key])
-    if "shared" in metrics_by_mode and metric_key in metrics_by_mode["shared"]:
-        return float(metrics_by_mode["shared"][metric_key])
     raise KeyError(f"Metric {metric_name} not found in evaluation results.")
 
 
@@ -311,10 +330,15 @@ def update_experiment_index(output_dir: Path, summary: dict):
     def pick(metrics_group: dict, mode: str, key: str):
         if key in metrics_group.get(mode, {}):
             return metrics_group.get(mode, {}).get(key)
-        return metrics_group.get("shared", {}).get(key)
+        return metrics_group.get("task", {}).get(key)
 
     selection_metric = summary["config"].get("selection_metric")
-    primary_mode, _, primary_metric_key = selection_metric.split("_", 2)
+    selection_parts = selection_metric.split("_")
+    if len(selection_parts) == 2 and selection_parts[0] == "valid":
+        primary_mode = "task"
+        primary_metric_key = selection_parts[1]
+    else:
+        primary_mode, _, primary_metric_key = selection_metric.split("_", 2)
 
     best_valid_primary = pick(best_valid, primary_mode, primary_metric_key)
     best_test_primary = pick(best_test, primary_mode, primary_metric_key)
@@ -438,21 +462,21 @@ def train_one_epoch(model, sampler, optimizer, item_criterion, time_criterion, a
 
 
 def print_eval_metrics(split: str, metrics_by_mode: dict, topks: list[int]):
-    shared_metrics = metrics_by_mode.get("shared")
-    if shared_metrics is not None:
-        pieces = [f"{split} [shared]"]
+    task_metrics = metrics_by_mode.get("task")
+    if task_metrics is not None:
+        pieces = [f"{split} [task]"]
         for k in topks:
-            pieces.append(f"Top{k}Acc: {shared_metrics[f'top{k}_accuracy']:.4f}")
-        pieces.append(f"Acc: {shared_metrics['accuracy']:.4f}")
-        pieces.append(f"MacroF1: {shared_metrics['macro_f1']:.4f}")
-        if "time_mae" in shared_metrics:
-            pieces.append(f"TimeMAE: {shared_metrics['time_mae']:.4f}")
-            pieces.append(f"TimeRMSE: {shared_metrics['time_rmse']:.4f}")
-            pieces.append(f"TimeMedAE: {shared_metrics['time_median_ae']:.4f}")
+            pieces.append(f"Top{k}Acc: {task_metrics[f'top{k}_accuracy']:.4f}")
+        pieces.append(f"Acc: {task_metrics['accuracy']:.4f}")
+        pieces.append(f"MacroF1: {task_metrics['macro_f1']:.4f}")
+        if "time_mae" in task_metrics:
+            pieces.append(f"TimeMAE: {task_metrics['time_mae']:.4f}")
+            pieces.append(f"TimeRMSE: {task_metrics['time_rmse']:.4f}")
+            pieces.append(f"TimeMedAE: {task_metrics['time_median_ae']:.4f}")
         print(', '.join(pieces))
 
     for mode, metrics in metrics_by_mode.items():
-        if mode == "shared":
+        if mode == "task":
             continue
         pieces = [f"{split} [{mode}]"]
         for k in topks:

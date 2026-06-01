@@ -28,6 +28,19 @@ The following Stage 1 and Stage 2 runs will be used as comparison baselines.
 - `attnbias_dstart_ml50_do035_b9`
   - strongest time-aware single-task result from Stage 2
 
+## Seed Policy
+
+Stage 3 comparisons should follow the same seed-based comparison rule used in the earlier stages.
+
+- seeds: `42`, `2024`, `7`
+- compare mean and standard deviation across the 3 seeds
+- do not interpret Stage 3 results from `s42` alone unless the run is only a pilot check
+
+This applies both to:
+
+- existing single-task reference runs
+- new multi-task runs
+
 ## Stage 3 New Experiments
 
 ### 1. Baseline multi-task
@@ -95,6 +108,15 @@ Reason:
 - this keeps Stage 3 directly comparable with Stage 1 and Stage 2
 - time prediction metrics will still be recorded and analyzed at the selected best epoch
 
+## Main Comparison Rule
+
+The main Stage 3 comparison should be based on:
+
+- `full ranking + NDCG@10`
+- specifically `best_test_at_best_valid_full_ndcg@10` for reporting test performance at the selected epoch
+
+Other ranking metrics and time-prediction metrics should be treated as supporting metrics.
+
 ## Metrics To Save And Print
 
 All metrics currently defined in the code should be saved and printed.
@@ -112,18 +134,24 @@ All metrics currently defined in the code should be saved and printed.
 - `sampled hr@10`
 - `sampled mrr`
 
-### Shared classification metrics
+### Task classification metrics
 
 - `accuracy`
 - `macro_f1`
 - `top5_accuracy`
 - `top10_accuracy`
 
-### Shared time-prediction metrics
+### Task time-prediction metrics
 
 - `time_mae`
 - `time_rmse`
 - `time_median_ae`
+
+Note:
+
+- earlier drafts and code versions used the label `shared_*` for these metrics
+- the current metric schema removes that prefix
+- ranking metrics remain separated as `full_*` and `sampled_*`
 
 ## Recommended Scope
 

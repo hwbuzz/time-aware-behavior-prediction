@@ -604,7 +604,7 @@ def evaluate_ranking(model, dataset, args, split: str = "test", mode: str = "sam
     return _ranking_metric_summary(ranks, topks)
 
 
-def evaluate_shared(model, dataset, args, split: str = "test", topks: list[int] | None = None, users: list[int] | None = None):
+def evaluate_task(model, dataset, args, split: str = "test", topks: list[int] | None = None, users: list[int] | None = None):
     train, valid, test, user_num, item_num, train_time, valid_time, _, time_meta = dataset
     target_dict = test if split == "test" else valid
     time_target_dict = time_meta.get("next_time_targets", {}).get(split, {})
@@ -663,7 +663,7 @@ def evaluate_all(model, dataset, args, split: str = "test", topks: list[int] | N
     if getattr(args, "eval_protocol", "both") == "both" and "full" not in modes:
         modes.insert(0, "full")
 
-    results = {"shared": evaluate_shared(model, dataset, args, split=split, topks=topks, users=users)}
+    results = {"task": evaluate_task(model, dataset, args, split=split, topks=topks, users=users)}
     for mode in modes:
         results[mode] = evaluate_ranking(model, dataset, args, split=split, mode=mode, topks=topks, users=users)
     return results
