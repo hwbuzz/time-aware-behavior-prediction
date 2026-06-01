@@ -71,11 +71,11 @@ def main() -> None:
             DRIVE_ROOT = '/content/drive/MyDrive/ai-projects/time-aware-behavior-prediction'
             REPO_DIR = '/content/time-aware-behavior-prediction'
 
-            DATA_DIR = f'{DRIVE_ROOT}/data/processed/bpi2012_complete_only'
+            DATA_DIR = f'{DRIVE_ROOT}/data/processed/bpi2012_complete_only_stage3_v2'
             BASELINE_NDCG10_OUTPUT_DIR = '/content/drive/MyDrive/ai-projects/time-aware-behavior-prediction/outputs/sasrec_bpi2012_ndcg10'
             SINGLE_TASK_ATTNBIAS_NDCG10_OUTPUT_DIR = '/content/drive/MyDrive/ai-projects/time-aware-behavior-prediction/outputs/sasrec_timeaware_attention_bias_ndcg10'
-            MULTITASK_BASELINE_OUTPUT_DIR = '/content/drive/MyDrive/ai-projects/time-aware-behavior-prediction/outputs/sasrec_stage3_baseline_multitask_ndcg10'
-            MULTITASK_ATTNBIAS_OUTPUT_DIR = '/content/drive/MyDrive/ai-projects/time-aware-behavior-prediction/outputs/sasrec_stage3_attention_bias_multitask_ndcg10'
+            MULTITASK_BASELINE_OUTPUT_DIR = '/content/drive/MyDrive/ai-projects/time-aware-behavior-prediction/outputs/sasrec_stage3_baseline_multitask_ndcg10_v2'
+            MULTITASK_ATTNBIAS_OUTPUT_DIR = '/content/drive/MyDrive/ai-projects/time-aware-behavior-prediction/outputs/sasrec_stage3_attention_bias_multitask_ndcg10_v2'
             NOTEBOOK_DIR = f'{DRIVE_ROOT}/notebooks'
 
             print('DATA_DIR:', DATA_DIR)
@@ -134,6 +134,16 @@ def main() -> None:
     )
 
     cells.append(code_cell("!pip install -r requirements_colab.txt"))
+    cells.append(code_cell("!ls \"$DATA_DIR\""))
+    cells.append(
+        code_cell(
+            "%cd /content/time-aware-behavior-prediction\n"
+            "!mkdir -p data/processed\n"
+            "!rm -rf data/processed/bpi2012_complete_only_stage3_v2\n"
+            "!cp -r \"$DATA_DIR\" data/processed/\n"
+            "!ls data/processed/bpi2012_complete_only_stage3_v2"
+        )
+    )
 
     cells.append(
         markdown_cell(
@@ -151,7 +161,7 @@ def main() -> None:
             """
             import pandas as pd
 
-            time_features_path = 'data/processed/bpi2012_complete_only/events_encoded_time_features.csv'
+            time_features_path = 'data/processed/bpi2012_complete_only_stage3_v2/events_encoded_time_features.csv'
             df = pd.read_csv(time_features_path)
             required_cols = [
                 'delta_prev_seconds',
@@ -283,8 +293,8 @@ def main() -> None:
                   --time_loss_weight 1.0 \\
                   --output_dir "$MULTITASK_ATTNBIAS_OUTPUT_DIR" \\
                   --selection_metric full_valid_ndcg@10 \\
-                  --interactions_path data/processed/bpi2012_complete_only/sasrec_interactions.txt \\
-                  --time_features_path data/processed/bpi2012_complete_only/events_encoded_time_features.csv \\
+                  --interactions_path data/processed/bpi2012_complete_only_stage3_v2/sasrec_interactions.txt \\
+                  --time_features_path data/processed/bpi2012_complete_only_stage3_v2/events_encoded_time_features.csv \\
                   --batch_size 128 \\
                   --num_epochs 50 \\
                   --eval_every 5 \\

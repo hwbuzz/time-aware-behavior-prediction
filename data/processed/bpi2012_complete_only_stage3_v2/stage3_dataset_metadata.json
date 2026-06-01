@@ -1,0 +1,47 @@
+{
+  "created_at_utc": "2026-06-01T06:46:15.589954+00:00",
+  "input_interim_csv": "C:\\Users\\hyewoo choi\\Documents\\99. 대학원\\0. 논문\\git\\time-aware-behavior-prediction\\data\\interim\\bpi2012_events_complete_only.csv",
+  "output_dir": "C:\\Users\\hyewoo choi\\Documents\\99. 대학원\\0. 논문\\git\\time-aware-behavior-prediction\\data\\processed\\bpi2012_complete_only_stage3_v2",
+  "min_case_length": 3,
+  "num_cases": 13087,
+  "num_events": 164506,
+  "num_users": 13087,
+  "num_items": 23,
+  "required_stage3_columns": [
+    "delta_prev_seconds",
+    "delta_start_seconds",
+    "delta_next_seconds"
+  ],
+  "blank_counts": {
+    "timestamp": 0,
+    "delta_prev_seconds": 0,
+    "delta_start_seconds": 0,
+    "delta_next_seconds": 0
+  },
+  "null_counts": {
+    "timestamp": 0,
+    "delta_prev_seconds": 0,
+    "delta_start_seconds": 0,
+    "delta_next_seconds": 0
+  },
+  "files": {
+    "events": "C:\\Users\\hyewoo choi\\Documents\\99. 대학원\\0. 논문\\git\\time-aware-behavior-prediction\\data\\processed\\bpi2012_complete_only_stage3_v2\\events_complete_only_filtered.csv",
+    "time_features": "C:\\Users\\hyewoo choi\\Documents\\99. 대학원\\0. 논문\\git\\time-aware-behavior-prediction\\data\\processed\\bpi2012_complete_only_stage3_v2\\events_encoded_time_features.csv",
+    "user_map": "C:\\Users\\hyewoo choi\\Documents\\99. 대학원\\0. 논문\\git\\time-aware-behavior-prediction\\data\\processed\\bpi2012_complete_only_stage3_v2\\user_map.csv",
+    "item_map": "C:\\Users\\hyewoo choi\\Documents\\99. 대학원\\0. 논문\\git\\time-aware-behavior-prediction\\data\\processed\\bpi2012_complete_only_stage3_v2\\item_map.csv",
+    "sasrec_txt": "C:\\Users\\hyewoo choi\\Documents\\99. 대학원\\0. 논문\\git\\time-aware-behavior-prediction\\data\\processed\\bpi2012_complete_only_stage3_v2\\sasrec_interactions.txt",
+    "sasrec_csv": "C:\\Users\\hyewoo choi\\Documents\\99. 대학원\\0. 논문\\git\\time-aware-behavior-prediction\\data\\processed\\bpi2012_complete_only_stage3_v2\\sasrec_interactions.csv"
+  },
+  "sha256": {
+    "events": "a5d35a512846aad19208d206e79d434e43fec23bd97bcd81a5aeff601be2f222",
+    "time_features": "60ab1c862ae3abc0e834198860827a12c7e9a17ed6ecc5d431b9b7c79131f52a",
+    "user_map": "ae7f1cb3e95cf7e5cc57765a66f3d031c20fada7c785d3f931bb5ad68949c328",
+    "item_map": "1eaac9fd5b91bdf1d435139c22800a4df8564ed159665a6adc399364b546a68a",
+    "sasrec_txt": "3337aeeae63968de040b793a2340afca3d1ccf658520767a01295f7679732c71",
+    "sasrec_csv": "359676b574b4f0d82edaad665c67f3ae2735c5baed915d25cd7a07b872423e03"
+  },
+  "notes": [
+    "This dataset is intended for Stage 3 multitask experiments.",
+    "It is versioned separately to preserve the Stage 2 processed dataset."
+  ]
+}

@@ -56,6 +56,36 @@ def _add_event_idx(events: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _normalize_event_table(events: pd.DataFrame) -> pd.DataFrame:
+    """Normalize event tables loaded from XES or CSV before preprocessing.
+
+    This handles mixed timestamp string formats such as:
+    - 2011-10-02 14:53:33+00:00
+    - 2011-10-02 14:53:33.152000+00:00
+    """
+    if events.empty:
+        return events.copy()
+
+    result = events.copy()
+    if "timestamp" in result.columns and not pd.api.types.is_datetime64_any_dtype(result["timestamp"]):
+        result["timestamp"] = pd.to_datetime(result["timestamp"], utc=True, errors="coerce", format="mixed")
+    elif "timestamp" in result.columns:
+        result["timestamp"] = pd.to_datetime(result["timestamp"], utc=True, errors="coerce")
+
+    if "event_idx" in result.columns and not pd.api.types.is_integer_dtype(result["event_idx"]):
+        result["event_idx"] = pd.to_numeric(result["event_idx"], errors="coerce")
+
+    required = [col for col in ["case_id", "activity", "timestamp"] if col in result.columns]
+    if "event_idx" in result.columns:
+        required.append("event_idx")
+    if required:
+        result = result.dropna(subset=required)
+
+    if "event_idx" in result.columns:
+        result["event_idx"] = result["event_idx"].astype("int64")
+    return result
+
+
 def load_bpi2012_events(
     xes_path: str | Path,
     activity_key: str = "concept:name",
@@ -100,8 +130,7 @@ def load_bpi2012_events(
     if events.empty:
         return events
 
-    events["timestamp"] = pd.to_datetime(events["timestamp"], utc=True, errors="coerce")
-    events = events.dropna(subset=["case_id", "activity", "timestamp"])
+    events = _normalize_event_table(events)
     events = events.drop_duplicates(subset=["case_id", "activity", "lifecycle", "timestamp"])
     return _add_event_idx(events)
 
@@ -250,17 +279,47 @@ def build_sasrec_interactions(encoded_events: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def validate_preprocess_result(result: PreprocessResult) -> None:
+    """Raise an error if core preprocessing outputs are internally inconsistent."""
+    encoded = result.encoded_events
+    required_no_na = [
+        "case_id",
+        "activity",
+        "timestamp",
+        "event_idx",
+        "user_id",
+        "item_id",
+        "delta_prev_seconds",
+        "delta_start_seconds",
+        "delta_next_seconds",
+    ]
+    missing_cols = [col for col in required_no_na if col not in encoded.columns]
+    if missing_cols:
+        raise ValueError(f"encoded_events is missing required columns: {missing_cols}")
+
+    na_counts = {col: int(encoded[col].isna().sum()) for col in required_no_na if encoded[col].isna().any()}
+    if na_counts:
+        raise ValueError(f"encoded_events contains missing values: {na_counts}")
+
+    rebuilt = build_sasrec_interactions(encoded)
+    if not rebuilt.equals(result.sasrec_interactions.reset_index(drop=True)):
+        raise ValueError("sasrec_interactions is inconsistent with encoded_events order/content.")
+
+
 def prepare_sasrec_dataset(
     events: pd.DataFrame,
     min_case_length: int = 3,
     verbose: bool = True,
 ) -> PreprocessResult:
     """Run filtering, time features, ID encoding, and SASRec interaction building."""
-    filtered = filter_short_cases(events, min_case_length=min_case_length, verbose=verbose)
+    normalized = _normalize_event_table(events)
+    filtered = filter_short_cases(normalized, min_case_length=min_case_length, verbose=verbose)
     time_features = add_time_features(filtered)
     encoded, user_map, item_map, encoding_summary = encode_ids(time_features)
     interactions = build_sasrec_interactions(encoded)
-    return PreprocessResult(filtered, encoded, user_map, item_map, interactions, encoding_summary)
+    result = PreprocessResult(filtered, encoded, user_map, item_map, interactions, encoding_summary)
+    validate_preprocess_result(result)
+    return result
 
 
 def _save_csv(df: pd.DataFrame, output_path: str | Path, **to_csv_kwargs: object) -> Path:

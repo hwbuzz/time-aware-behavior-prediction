@@ -98,7 +98,16 @@ def load_time_feature_sequences(
     separate_zero_gap: bool = True,
     target_time_column: str | None = None,
 ):
-    rows_by_user: dict[int, list[tuple[int, int, object, float | None]]] = defaultdict(list)
+    def parse_optional_float(value: str | None) -> float | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if stripped == "":
+            return None
+        return float(stripped)
+
+    rows_by_user: dict[int, list[tuple[int, int, float | None, float | None, float | None]]] = defaultdict(list)
+    missing_delta_count = 0
     with open(time_features_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         required_columns = {"user_id", "item_id", "event_idx", time_delta_column}
@@ -114,33 +123,65 @@ def load_time_feature_sequences(
             user_id = int(row["user_id"])
             item_id = int(row["item_id"])
             event_idx = int(row["event_idx"])
-            delta_seconds = float(row[time_delta_column])
-            if time_encoding == "bucket":
-                time_value = bucketize_time_delta(
-                    delta_seconds,
-                    event_idx,
-                    boundaries,
-                    separate_first_event=separate_first_event,
-                    separate_zero_gap=separate_zero_gap,
-                )
-            elif time_encoding == "continuous":
-                time_value = encode_continuous_time_features(delta_seconds, event_idx)
-            elif time_encoding == "raw":
-                time_value = encode_raw_time_delta(delta_seconds)
-            else:
-                raise ValueError(f"Unknown time_encoding: {time_encoding}")
-            target_value = float(row[target_time_column]) if target_time_column is not None else None
-            rows_by_user[user_id].append((event_idx, item_id, time_value, target_value))
+            delta_seconds = parse_optional_float(row.get(time_delta_column))
+            if delta_seconds is None:
+                missing_delta_count += 1
+            delta_prev_seconds = parse_optional_float(row.get("delta_prev_seconds"))
+            target_value = parse_optional_float(row.get(target_time_column)) if target_time_column is not None else None
+            rows_by_user[user_id].append((event_idx, item_id, delta_seconds, delta_prev_seconds, target_value))
 
     item_sequences = {}
     time_sequences = {}
     target_sequences = {}
     for user_id, rows in rows_by_user.items():
         rows.sort(key=lambda x: x[0])
-        item_sequences[user_id] = [item_id for _, item_id, _, _ in rows]
-        time_sequences[user_id] = [time_value for _, _, time_value, _ in rows]
+        item_sequences[user_id] = [item_id for _, item_id, _, _, _ in rows]
+        resolved_deltas: list[float] = []
+        prev_resolved_delta: float | None = None
+        for event_idx, _, raw_delta, delta_prev_seconds, _ in rows:
+            delta_seconds = raw_delta
+            if delta_seconds is None:
+                if time_delta_column == "delta_start_seconds":
+                    if event_idx == 0:
+                        delta_seconds = 0.0
+                    elif prev_resolved_delta is not None and delta_prev_seconds is not None:
+                        delta_seconds = prev_resolved_delta + delta_prev_seconds
+                    else:
+                        delta_seconds = 0.0
+                else:
+                    delta_seconds = 0.0
+            resolved_deltas.append(delta_seconds)
+            prev_resolved_delta = delta_seconds
+
+        if time_encoding == "bucket":
+            time_sequences[user_id] = [
+                bucketize_time_delta(
+                    delta_seconds,
+                    event_idx,
+                    boundaries,
+                    separate_first_event=separate_first_event,
+                    separate_zero_gap=separate_zero_gap,
+                )
+                for (event_idx, _, _, _, _), delta_seconds in zip(rows, resolved_deltas)
+            ]
+        elif time_encoding == "continuous":
+            time_sequences[user_id] = [
+                encode_continuous_time_features(delta_seconds, event_idx)
+                for (event_idx, _, _, _, _), delta_seconds in zip(rows, resolved_deltas)
+            ]
+        elif time_encoding == "raw":
+            time_sequences[user_id] = [encode_raw_time_delta(delta_seconds) for delta_seconds in resolved_deltas]
+        else:
+            raise ValueError(f"Unknown time_encoding: {time_encoding}")
+
         if target_time_column is not None:
-            target_sequences[user_id] = [float(target_value) for _, _, _, target_value in rows]
+            target_sequences[user_id] = [float(target_value) for _, _, _, _, target_value in rows]
+
+    if missing_delta_count:
+        print(
+            f"[warn] imputed {missing_delta_count} missing values in `{time_delta_column}` "
+            f"from `{time_features_path}`"
+        )
 
     bucket_meta = {
         "time_features_path": str(Path(time_features_path).resolve()),

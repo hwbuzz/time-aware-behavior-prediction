@@ -28,6 +28,24 @@ The following Stage 1 and Stage 2 runs will be used as comparison baselines.
 - `attnbias_dstart_ml50_do035_b9`
   - strongest time-aware single-task result from Stage 2
 
+## Data Policy
+
+Stage 3 should not overwrite the Stage 2 processed dataset.
+
+- keep Stage 2 dataset as-is:
+  - `data/processed/bpi2012_complete_only`
+- regenerate Stage 3 into a separate versioned folder:
+  - `data/processed/bpi2012_complete_only_stage3_v2`
+- save new Stage 3 outputs separately as well:
+  - `outputs/sasrec_stage3_baseline_multitask_ndcg10_v2`
+  - `outputs/sasrec_stage3_attention_bias_multitask_ndcg10_v2`
+
+Reason:
+
+- Stage 2 was verified against the earlier processed dataset and should remain reproducible
+- Stage 3 requires `delta_next_seconds`
+- a later local processed dataset was found to have parsing issues, so Stage 3 should use a separately regenerated and validated dataset
+
 ## Seed Policy
 
 Stage 3 comparisons should follow the same seed-based comparison rule used in the earlier stages.

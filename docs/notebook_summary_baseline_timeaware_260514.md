@@ -175,6 +175,9 @@
   backbone을 기준으로,
   - `next activity + next time`
   를 함께 예측하는 baseline multi-task 설정이 돌아가는지 먼저 확인하는 것.
+- 주의:
+  - 초기 pilot notebook이라 현재 권장 Stage 3 데이터 세트(`bpi2012_complete_only_stage3_v2`) 기준은 아님
+  - 재실행은 `02`, `03` notebook을 기준으로 하는 것이 더 안전함
 - 구조:
   - `s42` 중심의 first check
   - 이후 `s2024`, `s7` 확장 가능
@@ -188,6 +191,8 @@
   - single-task baseline 3-seed 결과 재사용
   - baseline multi-task 3-seed 결과 비교
   - mean/std 기준으로 Stage 3 baseline multi-task 효과를 해석하는 것.
+- 데이터:
+  - Stage 3 전용 processed 세트 `bpi2012_complete_only_stage3_v2` 사용
 - 구조:
   - 비교 대상:
     - `anchor_single_task`
@@ -212,6 +217,8 @@
   - Stage 3 baseline multi-task 결과를 함께 놓고,
   - `anchor + attention bias + multi-task`
   가 추가 이득이 있는지 확인하는 것.
+- 데이터:
+  - Stage 3 전용 processed 세트 `bpi2012_complete_only_stage3_v2` 사용
 - 구조:
   - 비교 대상:
     - `anchor_single_task`
