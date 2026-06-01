@@ -143,18 +143,6 @@
   - `refine_ml50_do035` 위에서 유망하게 보였던 attention bias를,
   - **최종 baseline `anchor_ml20`에도 적용했을 때 improvement가 있는지** 확인하는 실험이다.
 
-## 한 줄 정리
-
-- `evalfix_260512`: baseline 전체 재학습
-- `sanity_check_evalfix_260513`: baseline 최종 후보 sanity check
-- `02`: `anchor_ml20` + bucket time-aware
-- `03`: `refine_ml50_do035` + bucket time-aware
-- `04`: `refine_ml50_do035` + continuous time-aware
-- `05`: `refine_ml50_do035` + `delta_start` bucket/continuous 비교
-- `06`: `refine_ml50_do035` + attention bias time-aware
-- `07`: `anchor_ml20` + attention bias time-aware
-- `08`: `refine_ml50_do035` + attention bias bucket-boundary refinement
-
 ### `sasrec_timeaware_bpi2012_colab_train_08_260515.ipynb`
 - **`refine_ml50_do035` baseline** 위에서 attention bias bucket 경계를 한 번 더 세분화해보는 refinement notebook.
 - 목적:
@@ -176,3 +164,78 @@
 - 의미:
   - attention bias가 가장 유망했으므로,
   - **짧은 gap 구간을 더 촘촘히 나눈 bucket 경계가 성능을 더 높일 수 있는지** 확인하는 실험이다.
+
+## Stage 3 Multi-Task
+
+### `sasrec_stage3_bpi2012_colab_train_01_260531.ipynb`
+- Stage 3의 **첫 baseline multi-task pilot notebook**.
+- 목적:
+  - `anchor_ml20`
+  - `refine_ml50_do035`
+  backbone을 기준으로,
+  - `next activity + next time`
+  를 함께 예측하는 baseline multi-task 설정이 돌아가는지 먼저 확인하는 것.
+- 구조:
+  - `s42` 중심의 first check
+  - 이후 `s2024`, `s7` 확장 가능
+- 의미:
+  - Stage 3의 출발점으로,
+  - **multi-task learning 자체가 next-activity 성능에 어떤 영향을 주는지 보기 위한 pilot 실험**이다.
+
+### `sasrec_stage3_bpi2012_colab_train_02_260601.ipynb`
+- Stage 3 baseline multi-task의 **3-seed 본 비교 notebook**.
+- 목적:
+  - single-task baseline 3-seed 결과 재사용
+  - baseline multi-task 3-seed 결과 비교
+  - mean/std 기준으로 Stage 3 baseline multi-task 효과를 해석하는 것.
+- 구조:
+  - 비교 대상:
+    - `anchor_single_task`
+    - `refine_single_task`
+    - `anchor_multi_task`
+    - `refine_multi_task`
+  - task metric:
+    - `accuracy`
+    - `macro_f1`
+    - `top5_accuracy`
+    - `top10_accuracy`
+    - `time_mae`
+    - `time_rmse`
+    - `time_median_ae`
+- 의미:
+  - **next-time 예측을 함께 학습하는 baseline multi-task가 next-activity ranking을 개선하는지**를 정식으로 비교하는 Stage 3 핵심 notebook이다.
+
+### `sasrec_stage3_bpi2012_colab_train_03_260601.ipynb`
+- Stage 3에서 **`anchor_ml20` backbone 기반 attention-bias multi-task**를 실험하는 notebook.
+- 목적:
+  - 기존 Stage 2의 `anchor` single-task attention bias 결과와
+  - Stage 3 baseline multi-task 결과를 함께 놓고,
+  - `anchor + attention bias + multi-task`
+  가 추가 이득이 있는지 확인하는 것.
+- 구조:
+  - 비교 대상:
+    - `anchor_single_task`
+    - `anchor_attnbias_single_task`
+    - `anchor_multi_task`
+    - `anchor_attnbias_multi_task`
+  - 새로 학습:
+    - `multitask_attnbias_dstart_ml20_b9_s42`
+    - `multitask_attnbias_dstart_ml20_b9_s2024`
+    - `multitask_attnbias_dstart_ml20_b9_s7`
+- 의미:
+  - **Stage 2에서 가장 유망했던 attention bias를 Stage 3 multi-task로 확장했을 때, baseline multi-task보다 ranking loss를 얼마나 회복할 수 있는지** 확인하는 notebook이다.
+
+## 한 줄 정리
+
+- `evalfix_260512`: baseline 전체 재학습
+- `sanity_check_evalfix_260513`: baseline 최종 후보 sanity check
+- `02`: `anchor_ml20` + bucket time-aware
+- `03`: `refine_ml50_do035` + bucket time-aware
+- `04`: `refine_ml50_do035` + continuous time-aware
+- `05`: `refine_ml50_do035` + `delta_start` bucket/continuous 비교
+- `06`: `refine_ml50_do035` + attention bias time-aware
+- `07`: `anchor_ml20` + attention bias time-aware
+- `08`: `refine_ml50_do035` + attention bias bucket-boundary refinement
+- `stage3_01`: baseline multi-task pilot
+- `stage3_02`: baseline multi-task 3-seed 본 비교
+- `stage3_03`: `anchor_ml20` + attention-bias multi-task
