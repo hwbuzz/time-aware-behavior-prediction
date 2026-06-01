@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import dedent
 
 import nbformat as nbf
 
@@ -10,11 +11,11 @@ NOTEBOOK_PATH = ROOT / "notebooks" / "sasrec_stage3_bpi2012_colab_train_02_26060
 
 
 def code_cell(source: str):
-    return nbf.v4.new_code_cell(source.strip() + "\n")
+    return nbf.v4.new_code_cell(dedent(source).strip() + "\n")
 
 
 def markdown_cell(source: str):
-    return nbf.v4.new_markdown_cell(source.strip() + "\n")
+    return nbf.v4.new_markdown_cell(dedent(source).strip() + "\n")
 
 
 def main() -> None:
