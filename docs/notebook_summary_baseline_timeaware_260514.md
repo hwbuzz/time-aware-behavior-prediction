@@ -194,6 +194,25 @@
 - 의미:
   - Stage 3에서 loss-weight 조정 효과가 backbone 전반에 일반화되는지 확인하는 보조 실험
 
+### `sasrec_stage3_bpi2012_time_naive_baselines_07_260602.ipynb`
+- Stage 3의 next-time 예측 성능을 해석하기 위한 naive baseline 분석 notebook.
+- 목적:
+  - Stage 3와 같은 leave-one-out split logic으로
+  - `delta_next_seconds`에 대한 단순 baseline 성능을 계산하고
+  - multitask 모델의 next-time 성능이 trivial predictor보다 의미 있게 나은지 확인하는 것
+- baseline 종류:
+  - `global_mean`
+  - `global_median`
+  - `activity_mean`
+  - `prefix_len_mean`
+- 비교 metric:
+  - `MAE`
+  - `RMSE`
+  - `median AE`
+- 의미:
+  - Stage 3 time head 성능이 “절대적으로 어느 정도인지” 감이 없을 때,
+  - 최소 sanity-check 기준점을 제공하는 분석 notebook
+
 ## 한 줄 정리
 
 - `evalfix_260512`: baseline 전체 재학습
@@ -211,3 +230,4 @@
 - `stage3_04`: `anchor_ml20` + attention-bias multi-task `time_loss_weight=0.1`
 - `stage3_05`: `anchor_ml20` + plain multi-task `time_loss_weight=0.1`
 - `stage3_06`: `refine_ml50_do035` + plain multi-task `time_loss_weight=0.1`
+- `stage3_07`: next-time naive baseline 분석
