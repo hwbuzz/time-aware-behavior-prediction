@@ -414,18 +414,25 @@ def main() -> None:
             )
             df_compare = df_compare.sort_values(['variant', 'seed', 'run_name']).reset_index(drop=True)
 
-            display_cols = [
-                'run_name', 'seed', 'variant', 'maxlen', 'dropout_rate', 'selection_metric', 'time_loss_weight',
-                'best_valid_full_ndcg@10', 'best_valid_full_hr@10', 'best_valid_full_mrr',
-                'best_test_at_best_valid_full_ndcg@10', 'best_test_at_best_valid_full_hr@10', 'best_test_at_best_valid_full_mrr',
-                'best_valid_accuracy', 'best_valid_macro_f1', 'best_valid_top5_accuracy', 'best_valid_top10_accuracy',
-                'best_test_accuracy', 'best_test_macro_f1', 'best_test_top5_accuracy', 'best_test_top10_accuracy',
-                'best_valid_time_mae', 'best_valid_time_rmse', 'best_valid_time_median_ae',
-                'best_test_time_mae', 'best_test_time_rmse', 'best_test_time_median_ae',
+            id_cols = [
+                'run_name', 'seed', 'variant', 'maxlen', 'dropout_rate',
+                'selection_metric', 'time_loss_weight',
             ]
 
-            existing_display_cols = [c for c in display_cols if c in df_compare.columns]
-            df_compare[existing_display_cols]
+            metric_prefixes = (
+                'best_valid_',
+                'best_test_at_best_valid_',
+                'last_valid_',
+                'last_test_',
+            )
+
+            metric_cols = sorted([
+                c for c in df_compare.columns
+                if c.startswith(metric_prefixes)
+            ])
+
+            display_cols = [c for c in id_cols if c in df_compare.columns] + metric_cols
+            df_compare[display_cols]
             """
         )
     )
