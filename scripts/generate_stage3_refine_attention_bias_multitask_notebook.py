@@ -506,7 +506,11 @@ def main() -> None:
     cells.append(
         code_cell(
             """
-            summary_metric_cols = [c for c in df_compare.columns if c.startswith(('best_valid_', 'best_test_at_best_valid_'))]
+            summary_metric_cols = [
+                c for c in df_compare.columns
+                if c.startswith(('best_valid_', 'best_test_at_best_valid_'))
+                and pd.api.types.is_numeric_dtype(df_compare[c])
+            ]
             summary_compare = df_compare.groupby('variant')[summary_metric_cols].agg(['mean', 'std'])
             summary_compare
             """
