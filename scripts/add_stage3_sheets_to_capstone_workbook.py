@@ -42,21 +42,11 @@ SUMMARY_METRICS = [
     "best_valid_full_ndcg@5",
     "best_valid_full_hr@5",
     "best_valid_full_mrr",
-    "best_test_at_best_valid_full_ndcg@10",
-    "best_test_at_best_valid_full_hr@10",
-    "best_test_at_best_valid_full_ndcg@5",
-    "best_test_at_best_valid_full_hr@5",
-    "best_test_at_best_valid_full_mrr",
     "best_valid_sampled_ndcg@10",
     "best_valid_sampled_hr@10",
     "best_valid_sampled_ndcg@5",
     "best_valid_sampled_hr@5",
     "best_valid_sampled_mrr",
-    "best_test_at_best_valid_sampled_ndcg@10",
-    "best_test_at_best_valid_sampled_hr@10",
-    "best_test_at_best_valid_sampled_ndcg@5",
-    "best_test_at_best_valid_sampled_hr@5",
-    "best_test_at_best_valid_sampled_mrr",
     "best_valid_task_accuracy",
     "best_valid_task_macro_f1",
     "best_valid_task_top5_accuracy",
@@ -64,6 +54,16 @@ SUMMARY_METRICS = [
     "best_valid_task_time_mae",
     "best_valid_task_time_rmse",
     "best_valid_task_time_median_ae",
+    "best_test_at_best_valid_full_ndcg@10",
+    "best_test_at_best_valid_full_hr@10",
+    "best_test_at_best_valid_full_ndcg@5",
+    "best_test_at_best_valid_full_hr@5",
+    "best_test_at_best_valid_full_mrr",
+    "best_test_at_best_valid_sampled_ndcg@10",
+    "best_test_at_best_valid_sampled_hr@10",
+    "best_test_at_best_valid_sampled_ndcg@5",
+    "best_test_at_best_valid_sampled_hr@5",
+    "best_test_at_best_valid_sampled_mrr",
     "best_test_at_best_valid_task_accuracy",
     "best_test_at_best_valid_task_macro_f1",
     "best_test_at_best_valid_task_top5_accuracy",
@@ -71,6 +71,43 @@ SUMMARY_METRICS = [
     "best_test_at_best_valid_task_time_mae",
     "best_test_at_best_valid_task_time_rmse",
     "best_test_at_best_valid_task_time_median_ae",
+]
+
+RAW_METRIC_ORDER = SUMMARY_METRICS + [
+    "last_valid_full_ndcg@10",
+    "last_valid_full_hr@10",
+    "last_valid_full_ndcg@5",
+    "last_valid_full_hr@5",
+    "last_valid_full_mrr",
+    "last_valid_sampled_ndcg@10",
+    "last_valid_sampled_hr@10",
+    "last_valid_sampled_ndcg@5",
+    "last_valid_sampled_hr@5",
+    "last_valid_sampled_mrr",
+    "last_valid_task_accuracy",
+    "last_valid_task_macro_f1",
+    "last_valid_task_top5_accuracy",
+    "last_valid_task_top10_accuracy",
+    "last_valid_task_time_mae",
+    "last_valid_task_time_rmse",
+    "last_valid_task_time_median_ae",
+    "last_test_full_ndcg@10",
+    "last_test_full_hr@10",
+    "last_test_full_ndcg@5",
+    "last_test_full_hr@5",
+    "last_test_full_mrr",
+    "last_test_sampled_ndcg@10",
+    "last_test_sampled_hr@10",
+    "last_test_sampled_ndcg@5",
+    "last_test_sampled_hr@5",
+    "last_test_sampled_mrr",
+    "last_test_task_accuracy",
+    "last_test_task_macro_f1",
+    "last_test_task_top5_accuracy",
+    "last_test_task_top10_accuracy",
+    "last_test_task_time_mae",
+    "last_test_task_time_rmse",
+    "last_test_task_time_median_ae",
 ]
 
 
@@ -221,6 +258,171 @@ def clean_naive_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def ordered_metric_columns(available_cols: Iterable[str], metric_order: list[str]) -> list[str]:
+    available = list(available_cols)
+    ordered = [c for c in metric_order if c in available]
+    remaining = [c for c in available if c not in ordered]
+    return ordered + remaining
+
+
+RANKING_BLOCKS = [
+    ("full ranking", "full"),
+    ("negative sampling(100)", "sampled"),
+]
+
+COMMON_VALID_TASK_METRICS = [
+    "best_valid_task_accuracy",
+    "best_valid_task_macro_f1",
+    "best_valid_task_top5_accuracy",
+    "best_valid_task_top10_accuracy",
+    "best_valid_task_time_mae",
+    "best_valid_task_time_rmse",
+    "best_valid_task_time_median_ae",
+]
+
+COMMON_TEST_TASK_METRICS = [
+    "best_test_at_best_valid_task_accuracy",
+    "best_test_at_best_valid_task_macro_f1",
+    "best_test_at_best_valid_task_top5_accuracy",
+    "best_test_at_best_valid_task_top10_accuracy",
+    "best_test_at_best_valid_task_time_mae",
+    "best_test_at_best_valid_task_time_rmse",
+    "best_test_at_best_valid_task_time_median_ae",
+]
+
+DISPLAY_METRIC_LABELS = {
+    "best_valid_task_accuracy": "VALID Accuracy",
+    "best_valid_task_macro_f1": "VALID MacroF1",
+    "best_valid_task_top5_accuracy": "VALID Top5Acc",
+    "best_valid_task_top10_accuracy": "VALID Top10Acc",
+    "best_valid_task_time_mae": "VALID Time MAE",
+    "best_valid_task_time_rmse": "VALID Time RMSE",
+    "best_valid_task_time_median_ae": "VALID Time MedianAE",
+    "best_test_at_best_valid_task_accuracy": "TEST Accuracy",
+    "best_test_at_best_valid_task_macro_f1": "TEST MacroF1",
+    "best_test_at_best_valid_task_top5_accuracy": "TEST Top5Acc",
+    "best_test_at_best_valid_task_top10_accuracy": "TEST Top10Acc",
+    "best_test_at_best_valid_task_time_mae": "TEST Time MAE",
+    "best_test_at_best_valid_task_time_rmse": "TEST Time RMSE",
+    "best_test_at_best_valid_task_time_median_ae": "TEST Time MedianAE",
+}
+
+SUMMARY_METRIC_LAYOUT = [
+    ("NDCG@10", "VALID NDCG@10 mean", "VALID NDCG@10 std", "TEST NDCG@10 mean", "TEST NDCG@10 std"),
+    ("Hit@10", "VALID Hit@10 mean", "VALID Hit@10 std", "TEST Hit@10 mean", "TEST Hit@10 std"),
+    ("NDCG@5", "VALID NDCG@5 mean", "VALID NDCG@5 std", "TEST NDCG@5 mean", "TEST NDCG@5 std"),
+    ("Hit@5", "VALID Hit@5 mean", "VALID Hit@5 std", "TEST Hit@5 mean", "TEST Hit@5 std"),
+    ("MRR", "VALID MRR mean", "VALID MRR std", "TEST MRR mean", "TEST MRR std"),
+    ("Accuracy", "VALID Accuracy mean", "VALID Accuracy std", "TEST Accuracy mean", "TEST Accuracy std"),
+    ("MacroF1", "VALID MacroF1 mean", "VALID MacroF1 std", "TEST MacroF1 mean", "TEST MacroF1 std"),
+    ("Top5Acc", "VALID Top5Acc mean", "VALID Top5Acc std", "TEST Top5Acc mean", "TEST Top5Acc std"),
+    ("Top10Acc", "VALID Top10Acc mean", "VALID Top10Acc std", "TEST Top10Acc mean", "TEST Top10Acc std"),
+    ("Time MAE", "VALID Time MAE mean", "VALID Time MAE std", "TEST Time MAE mean", "TEST Time MAE std"),
+    ("Time RMSE", "VALID Time RMSE mean", "VALID Time RMSE std", "TEST Time RMSE mean", "TEST Time RMSE std"),
+    ("Time MedianAE", "VALID Time MedianAE mean", "VALID Time MedianAE std", "TEST Time MedianAE mean", "TEST Time MedianAE std"),
+]
+
+
+def build_split_raw_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, row in df.iterrows():
+        for eval_label, prefix in RANKING_BLOCKS:
+            out = {
+                "Dataset": "BPI 2012",
+                "run_name": row.get("run_name"),
+                "seed": row.get("seed"),
+                "variant": row.get("variant"),
+                "maxlen": row.get("maxlen"),
+                "dropout_rate": row.get("dropout_rate"),
+                "selection_metric": row.get("selection_metric"),
+                "time_loss_weight": row.get("time_loss_weight"),
+                "평가 방식": eval_label,
+                "best epoch 기준": row.get("selection_metric"),
+                "VALID NDCG@10": row.get(f"best_valid_{prefix}_ndcg@10"),
+                "VALID Hit@10": row.get(f"best_valid_{prefix}_hr@10"),
+                "VALID NDCG@5": row.get(f"best_valid_{prefix}_ndcg@5"),
+                "VALID Hit@5": row.get(f"best_valid_{prefix}_hr@5"),
+                "VALID MRR": row.get(f"best_valid_{prefix}_mrr"),
+            }
+            for metric in COMMON_VALID_TASK_METRICS:
+                out[DISPLAY_METRIC_LABELS[metric]] = row.get(metric)
+            out["TEST NDCG@10"] = row.get(f"best_test_at_best_valid_{prefix}_ndcg@10")
+            out["TEST Hit@10"] = row.get(f"best_test_at_best_valid_{prefix}_hr@10")
+            out["TEST NDCG@5"] = row.get(f"best_test_at_best_valid_{prefix}_ndcg@5")
+            out["TEST Hit@5"] = row.get(f"best_test_at_best_valid_{prefix}_hr@5")
+            out["TEST MRR"] = row.get(f"best_test_at_best_valid_{prefix}_mrr")
+            for metric in COMMON_TEST_TASK_METRICS:
+                out[DISPLAY_METRIC_LABELS[metric]] = row.get(metric)
+            rows.append(out)
+
+    out_df = pd.DataFrame(rows)
+    out_df.insert(0, "SEQ", range(1, len(out_df) + 1))
+    return out_df
+
+
+def build_split_summary_table(summary_df: pd.DataFrame, detail_df: pd.DataFrame) -> pd.DataFrame:
+    if summary_df.empty:
+        return pd.DataFrame()
+
+    meta_cols = ["variant", "maxlen", "dropout_rate", "time_loss_weight"]
+    meta_df = detail_df[[c for c in meta_cols if c in detail_df.columns]].drop_duplicates(subset=["variant"])
+    meta_lookup = {
+        row["variant"]: row.to_dict()
+        for _, row in meta_df.iterrows()
+    }
+
+    rows = []
+    for _, row in summary_df.iterrows():
+        variant = row["variant"]
+        meta = meta_lookup.get(variant, {})
+        for eval_label, prefix in RANKING_BLOCKS:
+            out = {
+                "Dataset": "BPI 2012",
+                "variant": variant,
+                "maxlen": meta.get("maxlen"),
+                "dropout_rate": meta.get("dropout_rate"),
+                "time_loss_weight": meta.get("time_loss_weight"),
+                "평가 방식": eval_label,
+                "best epoch 기준": "NDCG@10",
+                "VALID NDCG@10 mean": row.get(f"best_valid_{prefix}_ndcg@10|mean"),
+                "VALID NDCG@10 std": row.get(f"best_valid_{prefix}_ndcg@10|std"),
+                "VALID Hit@10 mean": row.get(f"best_valid_{prefix}_hr@10|mean"),
+                "VALID Hit@10 std": row.get(f"best_valid_{prefix}_hr@10|std"),
+                "VALID NDCG@5 mean": row.get(f"best_valid_{prefix}_ndcg@5|mean"),
+                "VALID NDCG@5 std": row.get(f"best_valid_{prefix}_ndcg@5|std"),
+                "VALID Hit@5 mean": row.get(f"best_valid_{prefix}_hr@5|mean"),
+                "VALID Hit@5 std": row.get(f"best_valid_{prefix}_hr@5|std"),
+                "VALID MRR mean": row.get(f"best_valid_{prefix}_mrr|mean"),
+                "VALID MRR std": row.get(f"best_valid_{prefix}_mrr|std"),
+            }
+            for metric in COMMON_VALID_TASK_METRICS:
+                label = DISPLAY_METRIC_LABELS[metric]
+                out[f"{label} mean"] = row.get(f"{metric}|mean")
+                out[f"{label} std"] = row.get(f"{metric}|std")
+            out["TEST NDCG@10 mean"] = row.get(f"best_test_at_best_valid_{prefix}_ndcg@10|mean")
+            out["TEST NDCG@10 std"] = row.get(f"best_test_at_best_valid_{prefix}_ndcg@10|std")
+            out["TEST Hit@10 mean"] = row.get(f"best_test_at_best_valid_{prefix}_hr@10|mean")
+            out["TEST Hit@10 std"] = row.get(f"best_test_at_best_valid_{prefix}_hr@10|std")
+            out["TEST NDCG@5 mean"] = row.get(f"best_test_at_best_valid_{prefix}_ndcg@5|mean")
+            out["TEST NDCG@5 std"] = row.get(f"best_test_at_best_valid_{prefix}_ndcg@5|std")
+            out["TEST Hit@5 mean"] = row.get(f"best_test_at_best_valid_{prefix}_hr@5|mean")
+            out["TEST Hit@5 std"] = row.get(f"best_test_at_best_valid_{prefix}_hr@5|std")
+            out["TEST MRR mean"] = row.get(f"best_test_at_best_valid_{prefix}_mrr|mean")
+            out["TEST MRR std"] = row.get(f"best_test_at_best_valid_{prefix}_mrr|std")
+            for metric in COMMON_TEST_TASK_METRICS:
+                label = DISPLAY_METRIC_LABELS[metric]
+                out[f"{label} mean"] = row.get(f"{metric}|mean")
+                out[f"{label} std"] = row.get(f"{metric}|std")
+            rows.append(out)
+
+    out_df = pd.DataFrame(rows)
+    out_df.insert(0, "SEQ", range(1, len(out_df) + 1))
+    return out_df
+
+
 def get_metric(summary_df: pd.DataFrame, variant: str, metric: str, stat: str = "mean"):
     if summary_df.empty:
         return None
@@ -332,6 +534,110 @@ def write_dataframe(ws, start_row: int, start_col: int, df: pd.DataFrame, title:
     return row
 
 
+def write_stage2_like_summary_table(ws, start_row: int, start_col: int, df: pd.DataFrame, title: str) -> int:
+    title_end_col = start_col + 7 + (len(SUMMARY_METRIC_LAYOUT) * 4) - 1
+    ws.merge_cells(start_row=start_row, start_column=start_col, end_row=start_row, end_column=title_end_col)
+    ws.cell(start_row, start_col, title)
+    ws.cell(start_row, start_col).font = Font(bold=True)
+
+    group_row = start_row + 1
+    metric_row = start_row + 2
+    stat_row = start_row + 3
+    data_start = start_row + 4
+
+    meta_headers = ["SEQ", "Dataset", "variant", "maxlen", "dropout_rate", "time_loss_weight", "평가 방식", "best epoch 기준"]
+    for idx, header in enumerate(meta_headers, start_col):
+        cell = ws.cell(stat_row, idx, header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="D9E1F2")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = Border(
+            left=copy(ws["B16"].border.left),
+            right=copy(ws["B16"].border.right),
+            top=copy(ws["B16"].border.top),
+            bottom=copy(ws["B16"].border.bottom),
+        )
+
+    valid_start = start_col + len(meta_headers)
+    valid_end = valid_start + (len(SUMMARY_METRIC_LAYOUT) * 2) - 1
+    test_start = valid_end + 1
+    test_end = test_start + (len(SUMMARY_METRIC_LAYOUT) * 2) - 1
+
+    ws.merge_cells(start_row=group_row, start_column=valid_start, end_row=group_row, end_column=valid_end)
+    ws.merge_cells(start_row=group_row, start_column=test_start, end_row=group_row, end_column=test_end)
+    ws.cell(group_row, valid_start, "VALID set 성능")
+    ws.cell(group_row, test_start, "TEST set 성능")
+
+    for c in range(valid_start, test_end + 1):
+        ws.cell(group_row, c).font = Font(bold=True)
+        ws.cell(group_row, c).fill = PatternFill("solid", fgColor="D9E1F2")
+        ws.cell(group_row, c).alignment = Alignment(horizontal="center", vertical="center")
+
+    current_col = valid_start
+    for metric_label, _, _, _, _ in SUMMARY_METRIC_LAYOUT:
+        ws.merge_cells(start_row=metric_row, start_column=current_col, end_row=metric_row, end_column=current_col + 1)
+        ws.cell(metric_row, current_col, metric_label)
+        ws.cell(stat_row, current_col, "mean")
+        ws.cell(stat_row, current_col + 1, "std")
+        current_col += 2
+
+    for c in range(valid_start, valid_end + 1):
+        ws.cell(metric_row, c).font = Font(bold=True)
+        ws.cell(metric_row, c).fill = PatternFill("solid", fgColor="D9E1F2")
+        ws.cell(metric_row, c).alignment = Alignment(horizontal="center", vertical="center")
+        ws.cell(stat_row, c).font = Font(bold=True)
+        ws.cell(stat_row, c).fill = PatternFill("solid", fgColor="D9E1F2")
+        ws.cell(stat_row, c).alignment = Alignment(horizontal="center", vertical="center")
+
+    current_col = test_start
+    for metric_label, _, _, _, _ in SUMMARY_METRIC_LAYOUT:
+        ws.merge_cells(start_row=metric_row, start_column=current_col, end_row=metric_row, end_column=current_col + 1)
+        ws.cell(metric_row, current_col, metric_label)
+        ws.cell(stat_row, current_col, "mean")
+        ws.cell(stat_row, current_col + 1, "std")
+        current_col += 2
+
+    for c in range(test_start, test_end + 1):
+        ws.cell(metric_row, c).font = Font(bold=True)
+        ws.cell(metric_row, c).fill = PatternFill("solid", fgColor="D9E1F2")
+        ws.cell(metric_row, c).alignment = Alignment(horizontal="center", vertical="center")
+        ws.cell(stat_row, c).font = Font(bold=True)
+        ws.cell(stat_row, c).fill = PatternFill("solid", fgColor="D9E1F2")
+        ws.cell(stat_row, c).alignment = Alignment(horizontal="center", vertical="center")
+
+    for row_offset, (_, row) in enumerate(df.iterrows()):
+        excel_row = data_start + row_offset
+        values = [
+            row.get("SEQ"),
+            row.get("Dataset"),
+            row.get("variant"),
+            row.get("maxlen"),
+            row.get("dropout_rate"),
+            row.get("time_loss_weight"),
+            row.get("평가 방식"),
+            row.get("best epoch 기준"),
+        ]
+        for idx, value in enumerate(values, start_col):
+            ws.cell(excel_row, idx, value)
+            ws.cell(excel_row, idx).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        current_col = valid_start
+        for _, v_mean, v_std, t_mean, t_std in SUMMARY_METRIC_LAYOUT:
+            ws.cell(excel_row, current_col, row.get(v_mean))
+            ws.cell(excel_row, current_col + 1, row.get(v_std))
+            current_col += 2
+        current_col = test_start
+        for _, v_mean, v_std, t_mean, t_std in SUMMARY_METRIC_LAYOUT:
+            ws.cell(excel_row, current_col, row.get(t_mean))
+            ws.cell(excel_row, current_col + 1, row.get(t_std))
+            current_col += 2
+
+        for c in range(start_col, test_end + 1):
+            ws.cell(excel_row, c).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    return data_start + len(df)
+
+
 def build_overview_df(parsed: dict[str, NotebookTables]) -> pd.DataFrame:
     rows = []
     s02 = clean_summary_df(parsed["02"].summary)
@@ -372,39 +678,107 @@ def create_stage3_overview(ws, template_ws, parsed: dict[str, NotebookTables]) -
     s05 = clean_summary_df(parsed["05"].summary)
     s06 = clean_summary_df(parsed["06"].summary)
 
-    bullets = [
-        (
-            "single-task에서 multi-task로 가면 next activity 성능이 전반적으로 낮아졌고, "
-            "time_loss_weight를 0.1로 낮추면 activity 성능은 회복되지만 time MAE와 trade-off가 발생함."
-        ),
-        (
-            "Stage 3 best multitask(activity 기준)는 anchor_multi_task_w0.1 "
-            f"(test full NDCG@10={fnum(get_metric(s05, 'anchor_multi_task_w0.1', 'best_test_at_best_valid_full_ndcg@10', 'mean'))})"
-            "이며, best time MAE는 anchor_attnbias_multi_task "
-            f"(MAE={fnum(get_metric(s03, 'anchor_attnbias_multi_task', 'best_test_at_best_valid_task_time_mae', 'mean'), 1)}초)임."
-        ),
-        (
-            "refine에서도 w0.1 조정 효과가 재현되었지만, overall main metric 기준으로는 "
-            f"anchor_multi_task_w0.1 ({fnum(get_metric(s05, 'anchor_multi_task_w0.1', 'best_test_at_best_valid_full_ndcg@10', 'mean'))})"
-            f" > refine_multi_task_w0.1 ({fnum(get_metric(s06, 'refine_multi_task_w0.1', 'best_test_at_best_valid_full_ndcg@10', 'mean'))})."
-        ),
-    ]
-    rows = [
-        ("실험 단계", "Stage 3: next activity + next time multitask"),
-        ("main activity metric", "full ranking, NDCG@10"),
-        ("main time metric", "MAE"),
-        ("실험 범위", "02~07 (baseline multitask, attention bias multitask, loss-weight, naive baselines)"),
-        ("핵심 질문", "multitask가 next activity를 유지하면서 next time도 의미 있게 예측할 수 있는지 확인"),
-    ]
-    next_row = write_summary_block(ws, "Stage 3 Multitask 실험 개요", rows, bullets, max_col=24)
+    # Rebuild top block in the style of 2-0.TimeAware.
+    ws["B2"] = "Stage 3 Multitask 실험"
+    ws["C3"] = "SASRec backbone 위에 next activity classification head와 next time regression head를 함께 두고 multitask learning으로 학습함"
+
+    info_rows = {
+        5: ("B", "0. 예측 target / 구조"),
+        6: ("C", "- next activity"),
+        7: ("D", "다음 이벤트의 activity 예측"),
+        8: ("C", "- next time (delta_next_seconds)"),
+        9: ("D", "현재 이벤트와 다음 이벤트 사이의 시간 차이(초 단위) 예측"),
+        10: ("D", "shared sequence representation 위에 activity head와 time head를 함께 학습"),
+        12: ("B", "1. Loss / 학습 설정"),
+        13: ("C", "activity loss + time loss를 함께 사용"),
+        14: ("C", "time loss는 Huber loss를 사용"),
+        15: ("C", "time target은 log1p(delta_next_seconds) 변환 후 학습"),
+        16: ("C", "time_loss_weight를 조정하여 activity-time trade-off 확인"),
+        18: ("B", "2. Main metric"),
+        19: ("C", "- activity main metric"),
+        20: ("D", "full ranking, NDCG@10"),
+        21: ("C", "- time main metric"),
+        22: ("D", "MAE"),
+        23: ("C", "- 보조 metric"),
+        24: ("D", "RMSE, Median AE"),
+        26: ("B", "3. 비교 축"),
+        27: ("C", "- backbone"),
+        28: ("D", "anchor_ml20, refine_ml50_do035"),
+        29: ("C", "- multitask 구조"),
+        30: ("D", "plain multitask, attention-bias multitask"),
+        31: ("C", "- loss weight"),
+        32: ("D", "time_loss_weight = 1.0, 0.1"),
+        34: ("B", "4. 해석 포인트"),
+        35: ("C", "single-task에서 multi-task로 갈 때 next activity 성능이 얼마나 유지되는지 확인"),
+        36: ("C", "time_loss_weight 조절에 따라 activity와 time prediction 사이 trade-off가 어떻게 바뀌는지 확인"),
+        37: ("C", "next-time 해석을 위해 global mean/median, activity mean, prefix length mean naive baseline과 비교"),
+    }
+    for row_idx, (col, value) in info_rows.items():
+        ws[f"{col}{row_idx}"] = value
+
+    # Match 2-0 style by copying a few key styles.
+    style_src = wb_style_source = None
+    # use 2-0.TimeAware sheet when available for visual consistency
+    if "2-0.TimeAware" in ws.parent.sheetnames:
+        wb_style_source = ws.parent["2-0.TimeAware"]
+        for ref, target in [
+            ("B2", "B2"),
+            ("C3", "C3"),
+            ("B5", "B5"),
+            ("B11", "B12"),
+            ("C6", "C6"),
+            ("D7", "D7"),
+        ]:
+            clone_cell_style(wb_style_source[ref], ws[target])
+        for row_idx in [5, 12, 18, 26, 34]:
+            clone_cell_style(wb_style_source["B5"], ws[f"B{row_idx}"])
+        for row_idx in [6, 8, 13, 14, 15, 16, 19, 21, 23, 27, 29, 31, 35, 36, 37]:
+            clone_cell_style(wb_style_source["C6"], ws[f"C{row_idx}"])
+        for row_idx in [7, 9, 10, 20, 22, 24, 28, 30, 32]:
+            clone_cell_style(wb_style_source["D7"], ws[f"D{row_idx}"])
+
+    # concise bottom summary
+    ws["B40"] = "요약"
+    ws["B41"] = (
+        "single-task에서 multi-task로 가면 next activity 성능이 전반적으로 낮아졌고, "
+        "time_loss_weight를 0.1로 낮추면 activity 성능은 회복되지만 time MAE와 trade-off가 발생함."
+    )
+    ws["B42"] = (
+        "Stage 3 best multitask(activity 기준)는 anchor_multi_task_w0.1 "
+        f"(test full NDCG@10={fnum(get_metric(s05, 'anchor_multi_task_w0.1', 'best_test_at_best_valid_full_ndcg@10', 'mean'))})이며, "
+        "best time MAE는 anchor_attnbias_multi_task "
+        f"(MAE={fnum(get_metric(s03, 'anchor_attnbias_multi_task', 'best_test_at_best_valid_task_time_mae', 'mean'), 1)}초)임."
+    )
+    ws["B43"] = (
+        "refine에서도 w0.1 조정 효과가 재현되었지만, overall main metric 기준으로는 "
+        f"anchor_multi_task_w0.1 ({fnum(get_metric(s05, 'anchor_multi_task_w0.1', 'best_test_at_best_valid_full_ndcg@10', 'mean'))})"
+        f" > refine_multi_task_w0.1 ({fnum(get_metric(s06, 'refine_multi_task_w0.1', 'best_test_at_best_valid_full_ndcg@10', 'mean'))})."
+    )
+    if wb_style_source is not None:
+        clone_cell_style(wb_style_source["B5"], ws["B40"])
+        clone_cell_style(template_ws["B12"], ws["B41"])
+        clone_cell_style(template_ws["B12"], ws["B42"])
+        clone_cell_style(template_ws["B12"], ws["B43"])
 
     overview_df = build_overview_df(parsed)
-    next_row = write_dataframe(ws, next_row + 1, 2, overview_df, "핵심 variant 비교")
+    next_row = write_dataframe(ws, 46, 2, overview_df, "핵심 variant 비교")
 
     naive = clean_naive_df(parsed["07"].naive_readable)
     if not naive.empty:
         test_naive = naive[naive["split"] == "test"].copy()
-        test_naive = test_naive[["baseline", "mae", "rmse", "median_ae", "mae_hours", "rmse_hours", "median_ae_minutes"]]
+        test_naive = test_naive[
+            [
+                "split",
+                "baseline",
+                "mae",
+                "rmse",
+                "median_ae",
+                "mae_hours",
+                "mae_minutes",
+                "rmse_hours",
+                "median_ae_minutes",
+            ]
+        ]
         write_dataframe(ws, next_row + 2, 2, test_naive, "Naive baseline (test split)")
 
 
@@ -488,22 +862,25 @@ def build_experiment_summary_lines(exp_no: str, summary_df: pd.DataFrame) -> tup
 
 
 def select_detail_columns(df: pd.DataFrame) -> pd.DataFrame:
-    preferred = [
+    id_cols = [
         "run_name",
         "seed",
         "variant",
         "maxlen",
         "dropout_rate",
+        "hidden_units",
         "selection_metric",
+        "best_epoch",
+        "enable_time_prediction",
+        "time_prediction_target",
         "time_loss_weight",
-        "best_valid_full_ndcg@10",
-        "best_valid_full_hr@10",
-        "best_valid_full_mrr",
-        "best_test_at_best_valid_full_ndcg@10",
-        "best_test_at_best_valid_full_hr@10",
-        "best_test_at_best_valid_full_mrr",
+        "time_target_transform",
+        "time_modeling_mode",
     ]
-    cols = [c for c in preferred if c in df.columns]
+    metric_prefixes = ("best_valid_", "best_test_at_best_valid_", "last_valid_", "last_test_")
+    metric_cols = [c for c in df.columns if c.startswith(metric_prefixes)]
+    metric_cols = ordered_metric_columns(metric_cols, RAW_METRIC_ORDER)
+    cols = [c for c in id_cols if c in df.columns] + metric_cols
     return df[cols].copy()
 
 
@@ -513,30 +890,17 @@ def create_stage3_experiment_sheet(ws, template_ws, exp_no: str, parsed: Noteboo
 
     detail = select_detail_columns(clean_detail_df(parsed.detail))
     summary = clean_summary_df(parsed.summary)
+    split_detail = build_split_raw_table(detail)
+    split_summary = build_split_summary_table(summary, detail)
 
     title, summary_rows, bullets = build_experiment_summary_lines(exp_no, summary)
     next_row = write_summary_block(ws, title, summary_rows, bullets, max_col=34)
 
-    if not summary.empty:
-        summary = summary.copy()
-        metric_order = ["variant"]
-        for metric in SUMMARY_METRICS:
-            for stat in ("mean", "std"):
-                key = f"{metric}|{stat}"
-                if key in summary.columns:
-                    metric_order.append(key)
-        summary = summary[metric_order]
-        next_row = write_dataframe(ws, next_row + 1, 2, summary, "전체 지표 mean/std summary")
+    if not split_summary.empty:
+        next_row = write_stage2_like_summary_table(ws, next_row + 1, 2, split_summary, "전체 지표 mean/std summary")
 
-    if not detail.empty:
-        detail = detail.copy()
-        detail.insert(0, "SEQ", range(1, len(detail) + 1))
-        detail.insert(1, "Dataset", "BPI 2012")
-        note_row = next_row + 1
-        ws.merge_cells(start_row=note_row, start_column=2, end_row=note_row, end_column=18)
-        ws.cell(note_row, 2, "참고: 아래 run별 raw 표는 notebook 저장 시점에 남아 있는 출력 컬럼 기준입니다. 전체 지표는 위 mean/std 표를 기준으로 확인합니다.")
-        ws.cell(note_row, 2).font = Font(italic=True)
-        next_row = write_dataframe(ws, note_row + 2, 2, detail, "run별 raw 결과")
+    if not split_detail.empty:
+        next_row = write_dataframe(ws, next_row + 2, 2, split_detail, "run별 raw 결과")
 
 
 def create_stage3_naive_sheet(ws, template_ws, parsed07: NotebookTables) -> None:
@@ -561,6 +925,19 @@ def create_stage3_naive_sheet(ws, template_ws, parsed07: NotebookTables) -> None
 
     if not naive.empty:
         test_naive = naive[naive["split"] == "test"].copy()
+        test_naive = test_naive[
+            [
+                "split",
+                "baseline",
+                "mae",
+                "rmse",
+                "median_ae",
+                "mae_hours",
+                "mae_minutes",
+                "rmse_hours",
+                "median_ae_minutes",
+            ]
+        ]
         write_dataframe(ws, next_row + 1, 2, test_naive, "Naive baseline (test split)")
         next_row += len(test_naive) + 4
 
