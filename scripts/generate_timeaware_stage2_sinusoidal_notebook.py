@@ -80,6 +80,13 @@ def train_cell(run_name: str, maxlen: int, dropout_rate: float, seed: int, time_
     ).strip()
 
 
+def append_train_section(cells, title: str, run_names: list[str], maxlen: int, dropout_rate: float, time_delta_column: str) -> None:
+    cells.append(markdown_cell(f"## Train `{title}`"))
+    for run_name, seed in zip(run_names, SEEDS):
+        cells.append(markdown_cell(f"### `{run_name}`"))
+        cells.append(code_cell(train_cell(run_name, maxlen, dropout_rate, seed, time_delta_column)))
+
+
 def main() -> None:
     nb = nbf.v4.new_notebook()
     cells = []
@@ -257,14 +264,38 @@ def main() -> None:
         )
     )
 
-    cells.append(markdown_cell("## Train `anchor_ml20 + Additive_sinusoidal + delta_prev_seconds`"))
-    cells.append(code_cell("\n\n".join(train_cell(run_name, 20, 0.2, seed, "delta_prev_seconds") for run_name, seed in zip(ANCHOR_SIN_DPREV_RUNS, SEEDS))))
-    cells.append(markdown_cell("## Train `anchor_ml20 + Additive_sinusoidal + delta_start_seconds`"))
-    cells.append(code_cell("\n\n".join(train_cell(run_name, 20, 0.2, seed, "delta_start_seconds") for run_name, seed in zip(ANCHOR_SIN_DSTART_RUNS, SEEDS))))
-    cells.append(markdown_cell("## Train `refine_ml50_do035 + Additive_sinusoidal + delta_prev_seconds`"))
-    cells.append(code_cell("\n\n".join(train_cell(run_name, 50, 0.35, seed, "delta_prev_seconds") for run_name, seed in zip(REFINE_SIN_DPREV_RUNS, SEEDS))))
-    cells.append(markdown_cell("## Train `refine_ml50_do035 + Additive_sinusoidal + delta_start_seconds`"))
-    cells.append(code_cell("\n\n".join(train_cell(run_name, 50, 0.35, seed, "delta_start_seconds") for run_name, seed in zip(REFINE_SIN_DSTART_RUNS, SEEDS))))
+    append_train_section(
+        cells,
+        "anchor_ml20 + Additive_sinusoidal + delta_prev_seconds",
+        ANCHOR_SIN_DPREV_RUNS,
+        20,
+        0.2,
+        "delta_prev_seconds",
+    )
+    append_train_section(
+        cells,
+        "anchor_ml20 + Additive_sinusoidal + delta_start_seconds",
+        ANCHOR_SIN_DSTART_RUNS,
+        20,
+        0.2,
+        "delta_start_seconds",
+    )
+    append_train_section(
+        cells,
+        "refine_ml50_do035 + Additive_sinusoidal + delta_prev_seconds",
+        REFINE_SIN_DPREV_RUNS,
+        50,
+        0.35,
+        "delta_prev_seconds",
+    )
+    append_train_section(
+        cells,
+        "refine_ml50_do035 + Additive_sinusoidal + delta_start_seconds",
+        REFINE_SIN_DSTART_RUNS,
+        50,
+        0.35,
+        "delta_start_seconds",
+    )
 
     cells.append(
         markdown_cell(
