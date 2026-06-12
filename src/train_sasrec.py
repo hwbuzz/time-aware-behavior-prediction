@@ -56,15 +56,27 @@ def parse_args():
     parser.add_argument(
         "--time_encoding",
         type=str,
-        choices=["bucket", "continuous"],
+        choices=["bucket", "continuous", "sinusoidal"],
         default="bucket",
-        help="Time representation for time-aware SASRec. 'bucket' uses embedding lookup, 'continuous' uses log1p(delta) projected by a linear layer.",
+        help=(
+            "Time representation for time-aware SASRec. "
+            "'bucket' uses embedding lookup, "
+            "'continuous' uses log1p(delta) projected by a linear layer, "
+            "and 'sinusoidal' applies Transformer-style sin/cos encoding to log1p(delta) "
+            "with an additional first-event indicator."
+        ),
     )
     parser.add_argument(
         "--time_bucket_boundaries",
         type=str,
         default="60,600,3600,86400",
         help="Comma-separated upper boundaries in seconds for positive time-delta buckets.",
+    )
+    parser.add_argument(
+        "--time_sinusoidal_base",
+        type=float,
+        default=10000.0,
+        help="Base used by sinusoidal time encoding frequencies.",
     )
     parser.add_argument(
         "--time_bucket_first_event_separate",
@@ -490,6 +502,8 @@ def main():
     args = parse_args()
     if args.use_time_embedding and args.use_time_attention_bias:
         raise ValueError("Use either --use_time_embedding or --use_time_attention_bias, not both at once.")
+    if args.time_encoding == "sinusoidal" and args.time_sinusoidal_base <= 1.0:
+        raise ValueError("--time_sinusoidal_base must be > 1.0 when time_encoding=sinusoidal.")
     topks = parse_topks(args.topk_list)
     args.selection_metric = normalize_selection_metric(args.selection_metric, args, topks)
     validate_selection_metric(args.selection_metric, args, topks)

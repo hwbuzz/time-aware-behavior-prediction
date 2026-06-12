@@ -71,6 +71,12 @@ def encode_continuous_time_features(delta_seconds: float, event_idx: int) -> tup
     return float(np.log1p(max(delta_seconds, 0.0))), float(event_idx == 0)
 
 
+def encode_sinusoidal_time_feature(delta_seconds: float, event_idx: int) -> tuple[float, float]:
+    # The model converts the compressed time delta into a Transformer-style sin/cos encoding
+    # and uses `is_first_event` to distinguish the initial event from later zero-gap events.
+    return float(np.log1p(max(delta_seconds, 0.0))), float(event_idx == 0)
+
+
 def transform_time_value(value, transform: str):
     if transform == "none":
         return value
@@ -167,6 +173,11 @@ def load_time_feature_sequences(
         elif time_encoding == "continuous":
             time_sequences[user_id] = [
                 encode_continuous_time_features(delta_seconds, event_idx)
+                for (event_idx, _, _, _, _), delta_seconds in zip(rows, resolved_deltas)
+            ]
+        elif time_encoding == "sinusoidal":
+            time_sequences[user_id] = [
+                encode_sinusoidal_time_feature(delta_seconds, event_idx)
                 for (event_idx, _, _, _, _), delta_seconds in zip(rows, resolved_deltas)
             ]
         elif time_encoding == "raw":

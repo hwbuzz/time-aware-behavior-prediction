@@ -39,6 +39,7 @@ class SASRec(torch.nn.Module):
         self.time_encoding = getattr(args, "time_encoding", "bucket")
         self.num_heads = args.num_heads
         self.time_bucket_zero_gap_separate = getattr(args, "time_bucket_zero_gap_separate", True)
+        self.time_sinusoidal_base = float(getattr(args, "time_sinusoidal_base", 10000.0))
 
         self.item_emb = torch.nn.Embedding(item_num + 1, args.hidden_units, padding_idx=0)
         self.pos_emb = torch.nn.Embedding(args.maxlen + 1, args.hidden_units, padding_idx=0)
@@ -47,6 +48,8 @@ class SASRec(torch.nn.Module):
                 self.time_emb = torch.nn.Embedding(args.time_bucket_count, args.hidden_units, padding_idx=0)
             elif self.time_encoding == "continuous":
                 self.time_proj = torch.nn.Linear(getattr(args, "time_feature_dim", 2), args.hidden_units)
+            elif self.time_encoding == "sinusoidal":
+                self.time_first_event_emb = torch.nn.Embedding(2, args.hidden_units)
             else:
                 raise ValueError(f"Unknown time_encoding: {self.time_encoding}")
         if self.use_time_attention_bias:
@@ -108,6 +111,35 @@ class SASRec(torch.nn.Module):
         bias = bias.reshape(-1, seq_len, seq_len)
         return bias + future_mask.unsqueeze(0)
 
+    def _sinusoidal_time_encoding(self, time_seqs) -> torch.Tensor:
+        time_tensor = torch.as_tensor(time_seqs, dtype=torch.float32, device=self.dev)
+        if time_tensor.ndim == 3:
+            delta_tensor = time_tensor[..., 0]
+            first_event_tensor = time_tensor[..., 1]
+        elif time_tensor.ndim != 2:
+            raise ValueError(
+                "Sinusoidal time encoding expects shape [batch, seq] "
+                "or [batch, seq, 2=(log1p_delta,is_first_event)], "
+                f"got {tuple(time_tensor.shape)}"
+            )
+        else:
+            delta_tensor = time_tensor
+            first_event_tensor = None
+
+        hidden_units = self.item_emb.embedding_dim
+        div_term = torch.exp(
+            torch.arange(0, hidden_units, 2, device=self.dev, dtype=torch.float32)
+            * (-np.log(self.time_sinusoidal_base) / hidden_units)
+        )
+        angles = delta_tensor.unsqueeze(-1) * div_term
+        encoding = torch.zeros((*delta_tensor.shape, hidden_units), dtype=torch.float32, device=self.dev)
+        encoding[..., 0::2] = torch.sin(angles)
+        encoding[..., 1::2] = torch.cos(angles[..., : encoding[..., 1::2].shape[-1]])
+        if first_event_tensor is not None:
+            first_event_idx = (first_event_tensor > 0.5).long()
+            encoding = encoding + self.time_first_event_emb(first_event_idx)
+        return encoding
+
     def log2feats(self, log_seqs: np.ndarray, time_seqs: np.ndarray | None = None) -> torch.Tensor:
         seqs = self.item_emb(torch.LongTensor(log_seqs).to(self.dev))
         seqs *= self.item_emb.embedding_dim ** 0.5
@@ -120,6 +152,8 @@ class SASRec(torch.nn.Module):
                 raise ValueError("time_seqs must be provided when use_time_embedding=True")
             if self.time_encoding == "bucket":
                 seqs += self.time_emb(torch.LongTensor(time_seqs).to(self.dev))
+            elif self.time_encoding == "sinusoidal":
+                seqs += self._sinusoidal_time_encoding(time_seqs)
             else:
                 time_tensor = torch.as_tensor(time_seqs, dtype=torch.float32, device=self.dev)
                 if time_tensor.ndim == 2:
