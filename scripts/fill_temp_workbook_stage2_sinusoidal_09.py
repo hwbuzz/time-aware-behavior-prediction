@@ -11,8 +11,8 @@ from openpyxl import load_workbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKBOOK_PATH = ROOT / "docs" / "임시.xlsx"
-FALLBACK_WORKBOOK_PATH = ROOT / "docs" / "임시_stage2_sinusoidal_added.xlsx"
+WORKBOOK_PATH = ROOT / "docs" / "임시_stage2_sinusoidal_added_20260614_132150.xlsx"
+FALLBACK_WORKBOOK_PATH = ROOT / "docs" / "임시_stage2_sinusoidal_added_rowwise.xlsx"
 NOTEBOOK_PATH = ROOT / "notebooks" / "sasrec_timeaware_bpi2012_colab_train_09_260612.ipynb"
 SOURCE_SHEET_NAME = "2-2.Attnbias_anchor"
 TARGET_SHEET_NAME = "2-3.Sinusoidal"
@@ -250,18 +250,10 @@ def main() -> None:
     detail_header_row = detail_start + 1
     detail_data_start = detail_start + 2
 
-    ws.merge_cells(start_row=detail_group_row, start_column=12, end_row=detail_group_row, end_column=16)
-    ws.merge_cells(start_row=detail_group_row, start_column=17, end_row=detail_group_row, end_column=21)
-    ws.merge_cells(start_row=detail_group_row, start_column=22, end_row=detail_group_row, end_column=26)
-    ws.merge_cells(start_row=detail_group_row, start_column=27, end_row=detail_group_row, end_column=31)
-    ws.merge_cells(start_row=detail_group_row, start_column=32, end_row=detail_group_row, end_column=35)
-    ws.merge_cells(start_row=detail_group_row, start_column=36, end_row=detail_group_row, end_column=39)
-    write_cell(ws, detail_group_row, 12, "VALID full ranking", group_header_style)
-    write_cell(ws, detail_group_row, 17, "TEST full ranking", group_header_style)
-    write_cell(ws, detail_group_row, 22, "VALID sampled", group_header_style)
-    write_cell(ws, detail_group_row, 27, "TEST sampled", group_header_style)
-    write_cell(ws, detail_group_row, 32, "VALID task", group_header_style)
-    write_cell(ws, detail_group_row, 36, "TEST task", group_header_style)
+    ws.merge_cells(start_row=detail_group_row, start_column=9, end_row=detail_group_row, end_column=17)
+    ws.merge_cells(start_row=detail_group_row, start_column=18, end_row=detail_group_row, end_column=26)
+    write_cell(ws, detail_group_row, 9, "VALID set 성능", group_header_style)
+    write_cell(ws, detail_group_row, 18, "TEST set 성능", group_header_style)
 
     detail_headers = [
         "SEQ",
@@ -272,24 +264,8 @@ def main() -> None:
         "maxlen",
         "dropout_rate",
         "time_encoding",
-        "time_delta_column",
+        "평가 방식",
         "best epoch 기준",
-    ] + [
-        "NDCG@10",
-        "Hit@10",
-        "NDCG@5",
-        "Hit@5",
-        "MRR",
-        "NDCG@10",
-        "Hit@10",
-        "NDCG@5",
-        "Hit@5",
-        "MRR",
-        "NDCG@10",
-        "Hit@10",
-        "NDCG@5",
-        "Hit@5",
-        "MRR",
         "NDCG@10",
         "Hit@10",
         "NDCG@5",
@@ -299,6 +275,11 @@ def main() -> None:
         "macro_f1",
         "top5_acc",
         "top10_acc",
+        "NDCG@10",
+        "Hit@10",
+        "NDCG@5",
+        "Hit@5",
+        "MRR",
         "accuracy",
         "macro_f1",
         "top5_acc",
@@ -312,21 +293,60 @@ def main() -> None:
     ordered_df = ordered_df.reset_index(drop=True)
     row_idx = detail_data_start
     for seq, (_, row) in enumerate(ordered_df.iterrows(), start=1):
-        row_values = [
-            seq,
+        full_metrics = [
+            row.get("best_valid_full_ndcg@10"),
+            row.get("best_valid_full_hr@10"),
+            row.get("best_valid_full_ndcg@5"),
+            row.get("best_valid_full_hr@5"),
+            row.get("best_valid_full_mrr"),
+            row.get("best_valid_task_accuracy"),
+            row.get("best_valid_task_macro_f1"),
+            row.get("best_valid_task_top5_accuracy"),
+            row.get("best_valid_task_top10_accuracy"),
+            row.get("best_test_at_best_valid_full_ndcg@10"),
+            row.get("best_test_at_best_valid_full_hr@10"),
+            row.get("best_test_at_best_valid_full_ndcg@5"),
+            row.get("best_test_at_best_valid_full_hr@5"),
+            row.get("best_test_at_best_valid_full_mrr"),
+            row.get("best_test_at_best_valid_task_accuracy"),
+            row.get("best_test_at_best_valid_task_macro_f1"),
+            row.get("best_test_at_best_valid_task_top5_accuracy"),
+            row.get("best_test_at_best_valid_task_top10_accuracy"),
+        ]
+        sampled_metrics = [
+            row.get("best_valid_sampled_ndcg@10"),
+            row.get("best_valid_sampled_hr@10"),
+            row.get("best_valid_sampled_ndcg@5"),
+            row.get("best_valid_sampled_hr@5"),
+            row.get("best_valid_sampled_mrr"),
+            row.get("best_valid_task_accuracy"),
+            row.get("best_valid_task_macro_f1"),
+            row.get("best_valid_task_top5_accuracy"),
+            row.get("best_valid_task_top10_accuracy"),
+            row.get("best_test_at_best_valid_sampled_ndcg@10"),
+            row.get("best_test_at_best_valid_sampled_hr@10"),
+            row.get("best_test_at_best_valid_sampled_ndcg@5"),
+            row.get("best_test_at_best_valid_sampled_hr@5"),
+            row.get("best_test_at_best_valid_sampled_mrr"),
+            row.get("best_test_at_best_valid_task_accuracy"),
+            row.get("best_test_at_best_valid_task_macro_f1"),
+            row.get("best_test_at_best_valid_task_top5_accuracy"),
+            row.get("best_test_at_best_valid_task_top10_accuracy"),
+        ]
+        common = [
             "BPI 2012",
             row["variant"],
             row["run_name"],
-            row["seed"],
             row["maxlen"],
             row["dropout_rate"],
-            row["time_encoding"],
-            row["time_delta_column"],
             "NDCG@10",
-        ] + [row.get(metric) for metric in DETAIL_METRICS]
-        for col, value in enumerate(row_values, start=2):
-            write_cell(ws, row_idx, col, value, text_style)
-        row_idx += 1
+        ]
+        full_row = [seq * 2 - 1] + common[:2] + [common[2], row["seed"], common[3], common[4], row["time_encoding"], row["평가 방식"] if "평가 방식" in row else "full ranking", common[5]] + full_metrics
+        sampled_row = [seq * 2] + common[:2] + [common[2], row["seed"], common[3], common[4], row["time_encoding"], "negative sampling(100)", common[5]] + sampled_metrics
+        for values in (full_row, sampled_row):
+            for col, value in enumerate(values, start=2):
+                write_cell(ws, row_idx, col, value, text_style)
+            row_idx += 1
 
     # Mean / std section
     meanstd_start = row_idx + 2
@@ -337,15 +357,10 @@ def main() -> None:
     meanstd_header_row = meanstd_start + 3
     meanstd_data_start = meanstd_start + 4
 
-    # Start metrics immediately after id columns to avoid unlabeled gaps.
-    metric_start_col = 8
+    metric_start_col = 9
     group_defs = [
-        ("VALID full ranking", 5),
-        ("TEST full ranking", 5),
-        ("VALID sampled", 5),
-        ("TEST sampled", 5),
-        ("VALID task", 4),
-        ("TEST task", 4),
+        ("VALID set 성능", 9),
+        ("TEST set 성능", 9),
     ]
 
     col_ptr = metric_start_col
@@ -356,12 +371,8 @@ def main() -> None:
         col_ptr += span
 
     metric_label_groups = [
-        ["NDCG@10", "Hit@10", "NDCG@5", "Hit@5", "MRR"],
-        ["NDCG@10", "Hit@10", "NDCG@5", "Hit@5", "MRR"],
-        ["NDCG@10", "Hit@10", "NDCG@5", "Hit@5", "MRR"],
-        ["NDCG@10", "Hit@10", "NDCG@5", "Hit@5", "MRR"],
-        ["accuracy", "macro_f1", "top5_acc", "top10_acc"],
-        ["accuracy", "macro_f1", "top5_acc", "top10_acc"],
+        ["NDCG@10", "Hit@10", "NDCG@5", "Hit@5", "MRR", "accuracy", "macro_f1", "top5_acc", "top10_acc"],
+        ["NDCG@10", "Hit@10", "NDCG@5", "Hit@5", "MRR", "accuracy", "macro_f1", "top5_acc", "top10_acc"],
     ]
     col_ptr = metric_start_col
     for labels in metric_label_groups:
@@ -372,29 +383,62 @@ def main() -> None:
             write_cell(ws, meanstd_header_row, col_ptr + 1, "std", meanstd_header_style)
             col_ptr += 2
 
-    id_headers = ["SEQ", "Dataset", "variant", "maxlen", "dropout_rate", "selection_metric"]
+    id_headers = ["SEQ", "Dataset", "variant", "run_name", "maxlen", "dropout_rate", "평가 방식", "selection_metric"]
     for col, header in enumerate(id_headers, start=2):
         write_cell(ws, meanstd_header_row, col, header, meanstd_header_style)
 
     summary_row_start = meanstd_data_start
     for seq, variant in enumerate(SUMMARY_VARIANTS, start=1):
         base_values = [
-            seq,
+            seq * 2 - 1,
             "BPI 2012",
+            variant,
             variant,
             ordered_df.loc[ordered_df["variant"] == variant, "maxlen"].iloc[0],
             ordered_df.loc[ordered_df["variant"] == variant, "dropout_rate"].iloc[0],
+            "full ranking",
             "NDCG@10",
         ]
         for col, value in enumerate(base_values, start=2):
             write_cell(ws, summary_row_start, col, value, text_style)
 
         col_ptr = metric_start_col
-        for metric in DETAIL_METRICS:
+        full_summary_metrics = [
+            "best_valid_full_ndcg@10", "best_valid_full_hr@10", "best_valid_full_ndcg@5", "best_valid_full_hr@5", "best_valid_full_mrr",
+            "best_valid_task_accuracy", "best_valid_task_macro_f1", "best_valid_task_top5_accuracy", "best_valid_task_top10_accuracy",
+            "best_test_at_best_valid_full_ndcg@10", "best_test_at_best_valid_full_hr@10", "best_test_at_best_valid_full_ndcg@5", "best_test_at_best_valid_full_hr@5", "best_test_at_best_valid_full_mrr",
+            "best_test_at_best_valid_task_accuracy", "best_test_at_best_valid_task_macro_f1", "best_test_at_best_valid_task_top5_accuracy", "best_test_at_best_valid_task_top10_accuracy",
+        ]
+        for metric in full_summary_metrics:
             write_cell(ws, summary_row_start, col_ptr, summary_df.loc[variant, (metric, "mean")], text_style)
             write_cell(ws, summary_row_start, col_ptr + 1, summary_df.loc[variant, (metric, "std")], text_style)
             col_ptr += 2
-        summary_row_start += 1
+
+        sampled_row_start = summary_row_start + 1
+        sampled_base_values = [
+            seq * 2,
+            "BPI 2012",
+            variant,
+            variant,
+            ordered_df.loc[ordered_df["variant"] == variant, "maxlen"].iloc[0],
+            ordered_df.loc[ordered_df["variant"] == variant, "dropout_rate"].iloc[0],
+            "negative sampling(100)",
+            "NDCG@10",
+        ]
+        for col, value in enumerate(sampled_base_values, start=2):
+            write_cell(ws, sampled_row_start, col, value, text_style)
+        col_ptr = metric_start_col
+        sampled_summary_metrics = [
+            "best_valid_sampled_ndcg@10", "best_valid_sampled_hr@10", "best_valid_sampled_ndcg@5", "best_valid_sampled_hr@5", "best_valid_sampled_mrr",
+            "best_valid_task_accuracy", "best_valid_task_macro_f1", "best_valid_task_top5_accuracy", "best_valid_task_top10_accuracy",
+            "best_test_at_best_valid_sampled_ndcg@10", "best_test_at_best_valid_sampled_hr@10", "best_test_at_best_valid_sampled_ndcg@5", "best_test_at_best_valid_sampled_hr@5", "best_test_at_best_valid_sampled_mrr",
+            "best_test_at_best_valid_task_accuracy", "best_test_at_best_valid_task_macro_f1", "best_test_at_best_valid_task_top5_accuracy", "best_test_at_best_valid_task_top10_accuracy",
+        ]
+        for metric in sampled_summary_metrics:
+            write_cell(ws, sampled_row_start, col_ptr, summary_df.loc[variant, (metric, "mean")], text_style)
+            write_cell(ws, sampled_row_start, col_ptr + 1, summary_df.loc[variant, (metric, "std")], text_style)
+            col_ptr += 2
+        summary_row_start += 2
 
     try:
         wb.save(WORKBOOK_PATH)
